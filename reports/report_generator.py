@@ -112,29 +112,64 @@ class ReportGenerator:
                         self._style_excel_cell(cell, result == 'PASS')
 
                 # 3. Distinct Check Tab
-                # Get distinct counts handling nulls
-                source_counts = source_df.fillna('NULL').nunique()
-                target_counts = target_df.fillna('NULL').nunique()
+                # Get non-numeric columns
+                non_numeric_cols = source_df.select_dtypes(exclude=['number']).columns
                 
-                # Create comparison DataFrame
-                distinct_data = pd.DataFrame({
-                    'Column': source_df.columns,
-                    'Source': source_counts,
-                    'Target': target_counts
-                })
+                # Prepare data for distinct check
+                distinct_checks = []
+                for col in non_numeric_cols:
+                    # Get distinct values for source
+                    source_values = sorted(source_df[col].fillna('NULL').astype(str).unique())
+                    source_count = len(source_values)
+                    source_display = ', '.join(source_values[:10])
+                    if source_count > 10:
+                        source_display += '...'
+                    
+                    # Get distinct values for target
+                    if col in target_df.columns:
+                        target_values = sorted(target_df[col].fillna('NULL').astype(str).unique())
+                        target_count = len(target_values)
+                        target_display = ', '.join(target_values[:10])
+                        if target_count > 10:
+                            target_display += '...'
+                    else:
+                        target_values = []
+                        target_count = 0
+                        target_display = 'Column not in target'
+                    
+                    # Compare counts and values
+                    count_match = source_count == target_count
+                    values_match = set(source_values) == set(target_values)
+                    
+                    distinct_checks.append({
+                        'Column': col,
+                        'Source_Distinct_Count': source_count,
+                        'Target_Distinct_Count': target_count,
+                        'Count_Match': 'PASS' if count_match else 'FAIL',
+                        'Values_Match': 'PASS' if values_match else 'FAIL',
+                        'Source_Values': source_display,
+                        'Target_Values': target_display
+                    })
                 
-                # Add match status
-                distinct_data['Match'] = 'FAIL'
-                distinct_data.loc[distinct_data['Source'] == distinct_data['Target'], 'Match'] = 'PASS'
-                
-                # Write to Excel
-                distinct_data.to_excel(writer, sheet_name='DistinctCheck', index=False)
-                
-                # Apply formatting
-                worksheet = writer.sheets['DistinctCheck']
-                for idx, row in enumerate(distinct_data.itertuples(), start=2):
-                    cell = worksheet.cell(row=idx, column=4)  # Match column
-                    self._style_excel_cell(cell, row.Match == 'PASS')
+                # Create DataFrame and write to Excel
+                if distinct_checks:
+                    distinct_df = pd.DataFrame(distinct_checks)
+                    distinct_df.to_excel(writer, sheet_name='DistinctCheck', index=False)
+                    
+                    # Apply formatting
+                    worksheet = writer.sheets['DistinctCheck']
+                    for idx, row in enumerate(distinct_df.itertuples(), start=2):
+                        # Format Count_Match column
+                        cell = worksheet.cell(row=idx, column=4)
+                        self._style_excel_cell(cell, row.Count_Match == 'PASS')
+                        
+                        # Format Values_Match column
+                        cell = worksheet.cell(row=idx, column=5)
+                        self._style_excel_cell(cell, row.Values_Match == 'PASS')
+                else:
+                    pd.DataFrame({
+                        'Message': ['No non-numeric columns found for distinct value comparison']
+                    }).to_excel(writer, sheet_name='DistinctCheck', index=False)
                 
             logger.info(f"Enhanced regression report generated: {report_path}")
             return str(report_path)
