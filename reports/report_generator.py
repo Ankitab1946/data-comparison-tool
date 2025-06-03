@@ -49,12 +49,6 @@ class ReportGenerator:
             })
         return pd.DataFrame(aggs)
 
-    def _get_distinct_counts(self, df: pd.DataFrame) -> dict:
-        """Get distinct value counts for each column."""
-        counts = {}
-        for col in df.columns:
-            counts[col] = len(df[col].dropna().unique())
-        return counts
 
     def generate_regression_report(self, comparison_results: Dict[str, Any], 
                                  source_df: pd.DataFrame, 
@@ -118,35 +112,29 @@ class ReportGenerator:
                         self._style_excel_cell(cell, result == 'PASS')
 
                 # 3. Distinct Check Tab
-                try:
-                    # Simple distinct value check
-                    data = []
-                    for col in source_df.columns:
-                        try:
-                            source_unique = len(pd.Series(source_df[col].fillna('NULL')).unique())
-                            target_unique = len(pd.Series(target_df[col].fillna('NULL')).unique()) if col in target_df.columns else 0
-                            data.append([col, source_unique, target_unique])
-                        except Exception as e:
-                            logger.warning(f"Error processing column {col}: {str(e)}")
-                            data.append([col, 0, 0])
-                    
-                    # Create DataFrame
-                    distinct_df = pd.DataFrame(data, columns=['Column', 'Source', 'Target'])
-                    distinct_df['Match'] = 'FAIL'  # Default to FAIL
-                    distinct_df.loc[distinct_df['Source'] == distinct_df['Target'], 'Match'] = 'PASS'
-                    
-                    # Write to Excel
-                    distinct_df.to_excel(writer, sheet_name='DistinctCheck', index=False)
-                    
-                    # Format the Match column
-                    worksheet = writer.sheets['DistinctCheck']
-                    for idx, match in enumerate(distinct_df['Match'], start=2):
-                        cell = worksheet.cell(row=idx, column=4)
-                        self._style_excel_cell(cell, match == 'PASS')
-                        
-                except Exception as e:
-                    logger.error(f"Error in distinct check: {str(e)}")
-                    pd.DataFrame({'Error': [str(e)]}).to_excel(writer, sheet_name='DistinctCheck', index=False)
+                # Get distinct counts handling nulls
+                source_counts = source_df.fillna('NULL').nunique()
+                target_counts = target_df.fillna('NULL').nunique()
+                
+                # Create comparison DataFrame
+                distinct_data = pd.DataFrame({
+                    'Column': source_df.columns,
+                    'Source': source_counts,
+                    'Target': target_counts
+                })
+                
+                # Add match status
+                distinct_data['Match'] = 'FAIL'
+                distinct_data.loc[distinct_data['Source'] == distinct_data['Target'], 'Match'] = 'PASS'
+                
+                # Write to Excel
+                distinct_data.to_excel(writer, sheet_name='DistinctCheck', index=False)
+                
+                # Apply formatting
+                worksheet = writer.sheets['DistinctCheck']
+                for idx, row in enumerate(distinct_data.itertuples(), start=2):
+                    cell = worksheet.cell(row=idx, column=4)  # Match column
+                    self._style_excel_cell(cell, row.Match == 'PASS')
                 
             logger.info(f"Enhanced regression report generated: {report_path}")
             return str(report_path)
