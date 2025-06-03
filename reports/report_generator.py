@@ -49,43 +49,12 @@ class ReportGenerator:
             })
         return pd.DataFrame(aggs)
 
-    def _compare_distinct_values(self, source_df: pd.DataFrame, target_df: pd.DataFrame) -> pd.DataFrame:
-        """Compare distinct values between source and target dataframes."""
-        results = []
-        
-        for column in source_df.columns:
-            # Handle null values consistently
-            source_series = source_df[column].fillna('NULL')
-            target_series = target_df[column].fillna('NULL') if column in target_df.columns else pd.Series()
-            
-            # Convert to strings for consistent comparison
-            source_series = source_series.astype(str)
-            target_series = target_series.astype(str)
-            
-            # Get distinct values
-            source_distinct = pd.Series(source_series.unique())
-            target_distinct = pd.Series(target_series.unique())
-            
-            # Compare
-            source_count = len(source_distinct)
-            target_count = len(target_distinct)
-            
-            # Sort values for comparison
-            source_values = sorted(source_distinct.tolist())
-            target_values = sorted(target_distinct.tolist())
-            
-            # Check if values match
-            values_match = source_values == target_values
-            
-            results.append({
-                'Column': str(column),
-                'Source_Count': source_count,
-                'Target_Count': target_count,
-                'Values_Match': values_match,
-                'Status': 'PASS' if values_match else 'FAIL'
-            })
-        
-        return pd.DataFrame(results)
+    def _get_distinct_counts(self, df: pd.DataFrame) -> dict:
+        """Get distinct value counts for each column."""
+        counts = {}
+        for col in df.columns:
+            counts[col] = len(df[col].dropna().unique())
+        return counts
 
     def generate_regression_report(self, comparison_results: Dict[str, Any], 
                                  source_df: pd.DataFrame, 
@@ -150,30 +119,34 @@ class ReportGenerator:
 
                 # 3. Distinct Check Tab
                 try:
-                    # Generate distinct value comparison
-                    distinct_df = self._compare_distinct_values(source_df, target_df)
+                    # Simple distinct value check
+                    data = []
+                    for col in source_df.columns:
+                        try:
+                            source_unique = len(pd.Series(source_df[col].fillna('NULL')).unique())
+                            target_unique = len(pd.Series(target_df[col].fillna('NULL')).unique()) if col in target_df.columns else 0
+                            data.append([col, source_unique, target_unique])
+                        except Exception as e:
+                            logger.warning(f"Error processing column {col}: {str(e)}")
+                            data.append([col, 0, 0])
                     
-                    if not distinct_df.empty:
-                        # Write to Excel
-                        distinct_df.to_excel(writer, sheet_name='DistinctCheck', index=False)
+                    # Create DataFrame
+                    distinct_df = pd.DataFrame(data, columns=['Column', 'Source', 'Target'])
+                    distinct_df['Match'] = 'FAIL'  # Default to FAIL
+                    distinct_df.loc[distinct_df['Source'] == distinct_df['Target'], 'Match'] = 'PASS'
+                    
+                    # Write to Excel
+                    distinct_df.to_excel(writer, sheet_name='DistinctCheck', index=False)
+                    
+                    # Format the Match column
+                    worksheet = writer.sheets['DistinctCheck']
+                    for idx, match in enumerate(distinct_df['Match'], start=2):
+                        cell = worksheet.cell(row=idx, column=4)
+                        self._style_excel_cell(cell, match == 'PASS')
                         
-                        # Apply formatting to Status and Values_Match columns
-                        worksheet = writer.sheets['DistinctCheck']
-                        for idx, row in enumerate(distinct_df.itertuples(), start=2):
-                            # Format Values_Match column (column 4)
-                            cell = worksheet.cell(row=idx, column=4)
-                            self._style_excel_cell(cell, row.Values_Match)
-                            
-                            # Format Status column (column 5)
-                            cell = worksheet.cell(row=idx, column=5)
-                            self._style_excel_cell(cell, row.Status == 'PASS')
-                    else:
-                        pd.DataFrame({'Message': ['No columns to compare']}).to_excel(
-                            writer, sheet_name='DistinctCheck', index=False)
                 except Exception as e:
                     logger.error(f"Error in distinct check: {str(e)}")
-                    pd.DataFrame({'Error': [str(e)]}).to_excel(
-                        writer, sheet_name='DistinctCheck', index=False)
+                    pd.DataFrame({'Error': [str(e)]}).to_excel(writer, sheet_name='DistinctCheck', index=False)
                 
             logger.info(f"Enhanced regression report generated: {report_path}")
             return str(report_path)
