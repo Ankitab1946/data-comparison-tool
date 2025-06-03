@@ -51,8 +51,16 @@ class ReportGenerator:
 
     def _get_distinct_values(self, df: pd.DataFrame, column: str) -> Tuple[int, List]:
         """Get distinct value count and list for a column."""
-        distinct_values = df[column].dropna().unique()
-        return len(distinct_values), sorted(distinct_values)
+        try:
+            # Convert to strings to handle mixed types
+            series = df[column].astype(str)
+            distinct_values = series.dropna().unique()
+            # Sort and convert to list for consistent comparison
+            sorted_values = sorted(list(distinct_values))
+            return len(distinct_values), sorted_values
+        except Exception as e:
+            logger.warning(f"Error getting distinct values for column {column}: {str(e)}")
+            return 0, []
 
     def generate_regression_report(self, comparison_results: Dict[str, Any], 
                                  source_df: pd.DataFrame, 
@@ -116,25 +124,62 @@ class ReportGenerator:
                         self._style_excel_cell(cell, result == 'PASS')
 
                 # 3. Distinct Check Tab
-                non_numeric_cols = source_df.select_dtypes(exclude=[np.number]).columns
-                distinct_checks = []
-                
-                for col in non_numeric_cols:
-                    source_count, source_values = self._get_distinct_values(source_df, col)
-                    target_count, target_values = self._get_distinct_values(target_df, col)
+                try:
+                    # Get non-numeric columns, fallback to all columns if none found
+                    non_numeric_cols = source_df.select_dtypes(exclude=[np.number]).columns
+                    if len(non_numeric_cols) == 0:
+                        logger.info("No non-numeric columns found, using all columns for distinct check")
+                        non_numeric_cols = source_df.columns
                     
-                    values_match = set(source_values) == set(target_values)
-                    count_match = source_count == target_count
+                    distinct_checks = []
                     
-                    distinct_checks.append({
-                        'Column': col,
-                        'Source_Distinct_Count': source_count,
-                        'Target_Distinct_Count': target_count,
-                        'Count_Match': 'PASS' if count_match else 'FAIL',
-                        'Values_Match': 'PASS' if values_match else 'FAIL',
-                        'Source_Values': ', '.join(map(str, source_values[:10])) + ('...' if len(source_values) > 10 else ''),
-                        'Target_Values': ', '.join(map(str, target_values[:10])) + ('...' if len(target_values) > 10 else '')
-                    })
+                    for col in non_numeric_cols:
+                        try:
+                            source_count, source_values = self._get_distinct_values(source_df, col)
+                            target_count, target_values = self._get_distinct_values(target_df, col)
+                            
+                            # Convert values to sets of strings for comparison
+                            source_set = {str(v) for v in source_values}
+                            target_set = {str(v) for v in target_values}
+                            
+                            values_match = source_set == target_set
+                            count_match = source_count == target_count
+                            
+                            # Format values for display, handling potential errors
+                            try:
+                                source_display = ', '.join(map(str, list(source_values)[:10]))
+                                if len(source_values) > 10:
+                                    source_display += '...'
+                            except Exception:
+                                source_display = "Error displaying values"
+                                
+                            try:
+                                target_display = ', '.join(map(str, list(target_values)[:10]))
+                                if len(target_values) > 10:
+                                    target_display += '...'
+                            except Exception:
+                                target_display = "Error displaying values"
+                            
+                            distinct_checks.append({
+                                'Column': col,
+                                'Source_Distinct_Count': source_count,
+                                'Target_Distinct_Count': target_count,
+                                'Count_Match': 'PASS' if count_match else 'FAIL',
+                                'Values_Match': 'PASS' if values_match else 'FAIL',
+                                'Source_Values': source_display,
+                                'Target_Values': target_display
+                            })
+                        except Exception as e:
+                            logger.warning(f"Error processing distinct check for column {col}: {str(e)}")
+                            distinct_checks.append({
+                                'Column': col,
+                                'Source_Distinct_Count': 'ERROR',
+                                'Target_Distinct_Count': 'ERROR',
+                                'Count_Match': 'ERROR',
+                                'Values_Match': 'ERROR',
+                                'Source_Values': 'Error processing column',
+                                'Target_Values': 'Error processing column'
+                            })
                 
                 distinct_df = pd.DataFrame(distinct_checks)
                 distinct_df.to_excel(writer, sheet_name='DistinctCheck', index=False)
