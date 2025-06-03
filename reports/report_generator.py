@@ -228,6 +228,39 @@ class ReportGenerator:
             logger.error(f"Error generating difference report: {str(e)}")
             raise
 
+    def generate_datacompy_report(self, comparison_results: Dict[str, Any]) -> str:
+        """Generate DataCompy report."""
+        try:
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            report_path = self.output_dir / f"DataCompy_{timestamp}.txt"
+            
+            with open(report_path, 'w') as f:
+                f.write(comparison_results.get('datacompy_report', 'No DataCompy report available'))
+            
+            logger.info(f"DataCompy report generated: {report_path}")
+            return str(report_path)
+            
+        except Exception as e:
+            logger.error(f"Error generating DataCompy report: {str(e)}")
+            raise
+
+    def generate_ydata_report(self, comparison_results: Dict[str, Any]) -> str:
+        """Generate Y-Data Profiling report."""
+        try:
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            report_path = self.output_dir / f"YDataProfile_{timestamp}.html"
+            
+            # Save the Y-Data Profile HTML report
+            with open(report_path, 'w') as f:
+                f.write(comparison_results.get('ydata_report', '<h1>No Y-Data Profile report available</h1>'))
+            
+            logger.info(f"Y-Data Profile report generated: {report_path}")
+            return str(report_path)
+            
+        except Exception as e:
+            logger.error(f"Error generating Y-Data Profile report: {str(e)}")
+            raise
+
     def create_report_archive(self, report_paths: Dict[str, str]) -> str:
         """Create a ZIP archive containing all reports."""
         try:
@@ -237,7 +270,19 @@ class ReportGenerator:
             with zipfile.ZipFile(str(zip_path), 'w') as zipf:
                 for report_type, path in report_paths.items():
                     if path and os.path.exists(path):
+                        # Add file to zip with its original name
                         zipf.write(path, os.path.basename(path))
+                        
+                        # For HTML reports, also add any associated resources
+                        if path.endswith('.html'):
+                            resources_dir = Path(path).parent / 'resources'
+                            if resources_dir.exists():
+                                for resource in resources_dir.rglob('*'):
+                                    if resource.is_file():
+                                        zipf.write(
+                                            resource,
+                                            os.path.join('resources', resource.relative_to(resources_dir))
+                                        )
             
             logger.info(f"Report archive created: {zip_path}")
             return str(zip_path)
