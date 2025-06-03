@@ -1005,7 +1005,16 @@ def main():
                     )
                     
                     # Update session state with edited mapping
-                    st.session_state.column_mapping = edited_mapping.to_dict('records')
+                    if edited_mapping is not None:
+                        try:
+                            st.session_state.column_mapping = edited_mapping.to_dict('records')
+                        except Exception as e:
+                            st.error(f"Error updating column mapping: {str(e)}")
+                            st.session_state.column_mapping = engine.auto_map_columns()
+                    else:
+                        st.warning("No changes made to column mapping")
+                        if 'column_mapping' not in st.session_state:
+                            st.session_state.column_mapping = engine.auto_map_columns()
                     
                     # Show mapping summary
                     col1, col2, col3 = st.columns(3)
@@ -1285,7 +1294,16 @@ def main():
         )
         
         # Update session state with edited mapping
-        st.session_state.column_mapping = edited_mapping.to_dict('records')
+        if edited_mapping is not None:
+            try:
+                st.session_state.column_mapping = edited_mapping.to_dict('records')
+            except Exception as e:
+                st.error(f"Error updating column mapping: {str(e)}")
+                st.session_state.column_mapping = engine.auto_map_columns()
+        else:
+            st.warning("No changes made to column mapping")
+            if 'column_mapping' not in st.session_state:
+                st.session_state.column_mapping = engine.auto_map_columns()
         
         # Show mapping summary
         st.markdown("#### Mapping Summary")
