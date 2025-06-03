@@ -829,28 +829,45 @@ def main():
                 </style>
             """, unsafe_allow_html=True)
             
-            # Display download buttons and preview for each profile report
-            for report_type, path in st.session_state.report_paths.items():
-                if report_type.startswith('profile'):
-                    col1, col2 = st.columns([1, 3])
-                    with col1:
-                        with open(path, 'rb') as f:
+            # Display profile reports with tabs
+            if any(key.startswith('profile') for key in st.session_state.report_paths.keys()):
+                profile_tabs = st.tabs(["Source Profile", "Target Profile", "Comparison Profile"])
+                
+                with profile_tabs[0]:
+                    if 'source_profile' in st.session_state.report_paths:
+                        with open(st.session_state.report_paths['source_profile'], 'rb') as f:
                             st.download_button(
-                                f"📈 Download {report_type.replace('profile_', '').replace('_', ' ').title()} Profile",
+                                "📈 Download Source Profile",
                                 f,
-                                file_name=os.path.basename(path),
-                                mime='text/html',
-                                help="Detailed data profiling analysis"
+                                file_name=os.path.basename(st.session_state.report_paths['source_profile']),
+                                mime='text/html'
                             )
-                    
-                    # Show preview for comparison profile
-                    if report_type == 'comparison_profile':
-                        with col2:
-                            st.write("Preview:")
-                            with open(path, 'r') as f:
-                                st.markdown('<div class="profile-container">', unsafe_allow_html=True)
-                                st.components.v1.html(f.read(), height=None)
-                                st.markdown('</div>', unsafe_allow_html=True)
+                        with open(st.session_state.report_paths['source_profile'], 'r') as f:
+                            st.components.v1.html(f.read(), height=600, scrolling=True)
+                
+                with profile_tabs[1]:
+                    if 'target_profile' in st.session_state.report_paths:
+                        with open(st.session_state.report_paths['target_profile'], 'rb') as f:
+                            st.download_button(
+                                "📈 Download Target Profile",
+                                f,
+                                file_name=os.path.basename(st.session_state.report_paths['target_profile']),
+                                mime='text/html'
+                            )
+                        with open(st.session_state.report_paths['target_profile'], 'r') as f:
+                            st.components.v1.html(f.read(), height=600, scrolling=True)
+                
+                with profile_tabs[2]:
+                    if 'comparison_profile' in st.session_state.report_paths:
+                        with open(st.session_state.report_paths['comparison_profile'], 'rb') as f:
+                            st.download_button(
+                                "📈 Download Comparison Profile",
+                                f,
+                                file_name=os.path.basename(st.session_state.report_paths['comparison_profile']),
+                                mime='text/html'
+                            )
+                        with open(st.session_state.report_paths['comparison_profile'], 'r') as f:
+                            st.components.v1.html(f.read(), height=600, scrolling=True)
         
         with report_tabs[3]:
             st.markdown("### Download All Reports")
