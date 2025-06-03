@@ -248,70 +248,146 @@ def load_data(source_type: str, file_upload, connection_params: Dict[str, Any] =
         if file_upload is None:
             raise ValueError(f"Please upload a {source_type}")
             
-        # Save uploaded file temporarily
-        with tempfile.NamedTemporaryFile(delete=False, suffix=file_upload.name) as tmp_file:
-            tmp_file.write(file_upload.getvalue())
-            return loader.read_chunked_file(tmp_file.name, delimiter=delimiter)
+        try:
+            # Save uploaded file temporarily
+            with tempfile.NamedTemporaryFile(delete=False, suffix=file_upload.name) as tmp_file:
+                tmp_file.write(file_upload.getvalue())
+                
+                # Try reading with pandas directly first
+                try:
+                    df = pd.read_csv(tmp_file.name, delimiter=delimiter)
+                    if df.empty:
+                        raise ValueError("No data found in the file")
+                    return df
+                except pd.errors.EmptyDataError:
+                    raise ValueError("The file appears to be empty")
+                except Exception as e:
+                    # If direct reading fails, try chunked reading
+                    return loader.read_chunked_file(tmp_file.name, delimiter=delimiter)
+        except Exception as e:
+            raise ValueError(f"Error reading {source_type}: {str(e)}")
             
     elif source_type == 'Parquet file':
         if file_upload is None:
             raise ValueError("Please upload a Parquet file")
             
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.parquet') as tmp_file:
-            tmp_file.write(file_upload.getvalue())
-            return loader.read_parquet(tmp_file.name)
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.parquet') as tmp_file:
+                tmp_file.write(file_upload.getvalue())
+                df = loader.read_parquet(tmp_file.name)
+                if df.empty:
+                    raise ValueError("No data found in the Parquet file")
+                return df
+        except Exception as e:
+            raise ValueError(f"Error reading Parquet file: {str(e)}")
             
     elif source_type == 'Flat files inside zipped folder':
         if file_upload is None:
             raise ValueError("Please upload a ZIP file")
             
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.zip') as tmp_file:
-            tmp_file.write(file_upload.getvalue())
-            extracted_files = loader.extract_zip(tmp_file.name)
-            
-            # Combine all extracted files
-            dfs = []
-            for file_path in extracted_files:
-                if file_path.endswith(('.csv', '.dat')):
-                    df = loader.read_chunked_file(file_path, delimiter=delimiter)
-                    dfs.append(df)
-            
-            if not dfs:
-                raise ValueError("No valid files found in ZIP archive")
-            return pd.concat(dfs, ignore_index=True)
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.zip') as tmp_file:
+                tmp_file.write(file_upload.getvalue())
+                extracted_files = loader.extract_zip(tmp_file.name)
+                
+                if not extracted_files:
+                    raise ValueError("No files found in ZIP archive")
+                
+                # Combine all extracted files
+                dfs = []
+                for file_path in extracted_files:
+                    if file_path.endswith(('.csv', '.dat')):
+                        try:
+                            # Try reading with pandas directly first
+                            df = pd.read_csv(file_path, delimiter=delimiter)
+                            if not df.empty:
+                                dfs.append(df)
+                        except Exception:
+                            # If direct reading fails, try chunked reading
+                            df = loader.read_chunked_file(file_path, delimiter=delimiter)
+                            if not df.empty:
+                                dfs.append(df)
+                
+                if not dfs:
+                    raise ValueError("No valid data files found in ZIP archive")
+                    
+                combined_df = pd.concat(dfs, ignore_index=True)
+                if combined_df.empty:
+                    raise ValueError("No data found in any of the files")
+                    
+                return combined_df
+        except Exception as e:
+            raise ValueError(f"Error processing ZIP file: {str(e)}")
             
     elif source_type in ['SQL Server', 'Teradata']:
         if not connection_params:
             raise ValueError(f"Please provide connection parameters for {source_type}")
             
-        engine = loader.connect_database(connection_params)
-        if 'query' in connection_params:
-            return pd.read_sql(connection_params['query'], engine)
-        else:
-            return pd.read_sql(connection_params['table'], engine)
+        try:
+            engine = loader.connect_database(connection_params)
+            
+            try:
+                if 'query' in connection_params and connection_params['query'].strip():
+                    df = pd.read_sql(connection_params['query'], engine)
+                elif 'table' in connection_params and connection_params['table'].strip():
+                    df = pd.read_sql(connection_params['table'], engine)
+                else:
+                    raise ValueError("Please provide either a query or table name")
+                
+                if df.empty:
+                    raise ValueError("No data returned from the database")
+                return df
+                
+            except Exception as e:
+                raise ValueError(f"Error executing query: {str(e)}")
+                
+        except Exception as e:
+            raise ValueError(f"Database connection error: {str(e)}")
             
     elif source_type == 'Stored Procs':
         if not connection_params:
             raise ValueError("Please provide stored procedure details")
             
-        engine = loader.connect_database(connection_params)
-        return loader.execute_stored_proc(
-            engine,
-            connection_params['proc_name'],
-            connection_params.get('params')
-        )
+        if not connection_params.get('proc_name'):
+            raise ValueError("Stored procedure name is required")
+            
+        try:
+            engine = loader.connect_database(connection_params)
+            df = loader.execute_stored_proc(
+                engine,
+                connection_params['proc_name'],
+                connection_params.get('params')
+            )
+            
+            if df is None or df.empty:
+                raise ValueError("No data returned from stored procedure")
+            return df
+            
+        except Exception as e:
+            raise ValueError(f"Error executing stored procedure: {str(e)}")
         
     elif source_type == 'API':
         if not connection_params:
             raise ValueError("Please provide API details")
             
-        return loader.call_api(
-            connection_params['url'],
-            method=connection_params.get('method', 'GET'),
-            headers=connection_params.get('headers'),
-            params=connection_params.get('params'),
-            data=connection_params.get('data')
-        )
+        if not connection_params.get('url'):
+            raise ValueError("API URL is required")
+            
+        try:
+            df = loader.call_api(
+                connection_params['url'],
+                method=connection_params.get('method', 'GET'),
+                headers=connection_params.get('headers'),
+                params=connection_params.get('params'),
+                data=connection_params.get('data')
+            )
+            
+            if df is None or df.empty:
+                raise ValueError("No data returned from API")
+            return df
+            
+        except Exception as e:
+            raise ValueError(f"API call failed: {str(e)}")
         
     else:
         raise ValueError(f"Unsupported source type: {source_type}")
@@ -484,19 +560,56 @@ def main():
     # Load Data button
     if st.button("Load Data"):
         try:
+            # Validate inputs before loading
+            if source_type in ['CSV file', 'DAT file', 'Parquet file', 'Flat files inside zipped folder']:
+                if 'source_file' not in st.session_state or st.session_state.source_file is None:
+                    st.error(f"Please upload a {source_type} for source data")
+                    return
+            else:
+                if not source_params or not source_params.get('server') or not source_params.get('database'):
+                    st.error("Please provide all required connection parameters for source")
+                    return
+
+            if target_type in ['CSV file', 'DAT file', 'Parquet file', 'Flat files inside zipped folder']:
+                if 'target_file' not in st.session_state or st.session_state.target_file is None:
+                    st.error(f"Please upload a {target_type} for target data")
+                    return
+            else:
+                if not target_params or not target_params.get('server') or not target_params.get('database'):
+                    st.error("Please provide all required connection parameters for target")
+                    return
+
+            # Load source data
             with st.spinner("Loading source data..."):
-                if source_type in ['CSV file', 'DAT file', 'Parquet file', 'Flat files inside zipped folder']:
-                    source_data = load_data(source_type, st.session_state.source_file,
-                                         delimiter=st.session_state.get('source_delimiter', ','))
-                else:
-                    source_data = load_data(source_type, None, source_params)
+                try:
+                    if source_type in ['CSV file', 'DAT file', 'Parquet file', 'Flat files inside zipped folder']:
+                        source_data = load_data(source_type, st.session_state.source_file,
+                                             delimiter=st.session_state.get('source_delimiter', ','))
+                    else:
+                        source_data = load_data(source_type, None, source_params)
                     
+                    if source_data is None or source_data.empty:
+                        st.error("No data loaded from source. Please check your source configuration.")
+                        return
+                except Exception as e:
+                    st.error(f"Error loading source data: {str(e)}")
+                    return
+                    
+            # Load target data
             with st.spinner("Loading target data..."):
-                if target_type in ['CSV file', 'DAT file', 'Parquet file', 'Flat files inside zipped folder']:
-                    target_data = load_data(target_type, st.session_state.target_file,
-                                         delimiter=st.session_state.get('target_delimiter', ','))
-                else:
-                    target_data = load_data(target_type, None, target_params)
+                try:
+                    if target_type in ['CSV file', 'DAT file', 'Parquet file', 'Flat files inside zipped folder']:
+                        target_data = load_data(target_type, st.session_state.target_file,
+                                             delimiter=st.session_state.get('target_delimiter', ','))
+                    else:
+                        target_data = load_data(target_type, None, target_params)
+                    
+                    if target_data is None or target_data.empty:
+                        st.error("No data loaded from target. Please check your target configuration.")
+                        return
+                except Exception as e:
+                    st.error(f"Error loading target data: {str(e)}")
+                    return
                     
             # Store in session state
             st.session_state.source_data = source_data
