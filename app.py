@@ -713,13 +713,19 @@ def main():
                         report_paths = {}
                         
                         with st.spinner("Generating DataCompy report..."):
-                            # DataCompy report is already in comparison_results
-                            pass
+                            # Save DataCompy report
+                            datacompy_path = report_gen.generate_datacompy_report(comparison_results)
+                            report_paths['datacompy'] = datacompy_path
                             
                         with st.spinner("Generating Y-DataProfiling report..."):
-                            # Profile reports
+                            # Generate profile reports
                             profile_paths = engine.generate_profiling_reports("reports")
                             report_paths.update(profile_paths)
+                            
+                            # Display profile reports in UI
+                            if 'comparison_profile' in profile_paths:
+                                with open(profile_paths['comparison_profile'], 'r') as f:
+                                    st.components.v1.html(f.read(), height=600)
                         
                         with st.spinner("Generating Regression report..."):
                             # Enhanced Regression report with multiple checks
@@ -740,7 +746,7 @@ def main():
                                 report_paths['differences'] = diff_report
                         
                         with st.spinner("Creating report archive..."):
-                            # Create ZIP archive
+                            # Create ZIP archive with all reports
                             zip_path = report_gen.create_report_archive(report_paths)
                         
                         # Store results in session state
