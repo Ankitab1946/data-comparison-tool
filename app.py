@@ -712,28 +712,43 @@ def main():
                         # Generate and save reports
                         report_paths = {}
                         
-                        # Regression report
-                        report_paths['regression'] = report_gen.generate_regression_report(comparison_results)
+                        with st.spinner("Generating DataCompy report..."):
+                            # DataCompy report is already in comparison_results
+                            pass
+                            
+                        with st.spinner("Generating Y-DataProfiling report..."):
+                            # Profile reports
+                            profile_paths = engine.generate_profiling_reports("reports")
+                            report_paths.update(profile_paths)
                         
-                        # Difference report
-                        if 'source_unmatched_rows' in comparison_results:
-                            differences = pd.concat([
-                                comparison_results['source_unmatched_rows'],
-                                comparison_results['target_unmatched_rows']
-                            ])
-                            report_paths['differences'] = report_gen.generate_difference_report(differences)
+                        with st.spinner("Generating Regression report..."):
+                            # Enhanced Regression report with multiple checks
+                            report_paths['regression'] = report_gen.generate_regression_report(
+                                comparison_results,
+                                st.session_state.source_data,
+                                st.session_state.target_data
+                            )
                         
-                        # Profile reports
-                        profile_paths = engine.generate_profiling_reports("reports")
-                        report_paths.update(profile_paths)
+                        with st.spinner("Generating Side-by-side Difference report..."):
+                            # Enhanced difference report
+                            diff_report = report_gen.generate_difference_report(
+                                st.session_state.source_data,
+                                st.session_state.target_data,
+                                join_columns
+                            )
+                            if diff_report:
+                                report_paths['differences'] = diff_report
                         
-                        # Create ZIP archive
-                        zip_path = report_gen.create_report_archive(report_paths)
+                        with st.spinner("Creating report archive..."):
+                            # Create ZIP archive
+                            zip_path = report_gen.create_report_archive(report_paths)
                         
                         # Store results in session state
                         st.session_state.comparison_results = comparison_results
                         st.session_state.report_paths = report_paths
                         st.session_state.zip_path = zip_path
+                        
+                        st.success("All reports generated successfully!")
                         
                 except Exception as e:
                     st.error(f"Comparison failed: {str(e)}")
@@ -756,30 +771,71 @@ def main():
         with st.expander("View DataCompy Report"):
             st.text(st.session_state.comparison_results['datacompy_report'])
         
-        # Download buttons
+        # Download Reports Section
         st.subheader("4. Download Reports")
         
-        col1, col2 = st.columns(2)
-        with col1:
-            # Individual report downloads
-            for report_type, path in st.session_state.report_paths.items():
-                with open(path, 'rb') as f:
-                    st.download_button(
-                        f"Download {report_type.replace('_', ' ').title()} Report",
-                        f,
-                        file_name=os.path.basename(path),
-                        mime='application/octet-stream'
-                    )
+        # Create tabs for different report categories
+        report_tabs = st.tabs([
+            "Analysis Reports", 
+            "Difference Reports", 
+            "Profile Reports",
+            "Download All"
+        ])
         
-        with col2:
-            # ZIP archive download
+        with report_tabs[0]:
+            st.markdown("### Analysis Reports")
+            if 'regression' in st.session_state.report_paths:
+                with open(st.session_state.report_paths['regression'], 'rb') as f:
+                    st.download_button(
+                        "📊 Download Regression Report (Excel)",
+                        f,
+                        file_name=os.path.basename(st.session_state.report_paths['regression']),
+                        mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                        help="Contains Count Check, Aggregation Check, and Distinct Value Analysis"
+                    )
+            
+            # DataCompy Report
+            st.markdown("#### DataCompy Report")
+            st.text(st.session_state.comparison_results['datacompy_report'])
+            
+        with report_tabs[1]:
+            st.markdown("### Difference Reports")
+            if 'differences' in st.session_state.report_paths:
+                with open(st.session_state.report_paths['differences'], 'rb') as f:
+                    st.download_button(
+                        "📋 Download Side-by-Side Difference Report (Excel)",
+                        f,
+                        file_name=os.path.basename(st.session_state.report_paths['differences']),
+                        mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                        help="Shows source and target data side by side with highlighted differences"
+                    )
+            else:
+                st.info("No differences found between source and target datasets.")
+            
+        with report_tabs[2]:
+            st.markdown("### Profile Reports")
+            for report_type, path in st.session_state.report_paths.items():
+                if report_type.startswith('profile'):
+                    with open(path, 'rb') as f:
+                        st.download_button(
+                            f"📈 Download {report_type.replace('profile_', '').replace('_', ' ').title()} Profile",
+                            f,
+                            file_name=os.path.basename(path),
+                            mime='text/html',
+                            help="Detailed data profiling analysis"
+                        )
+        
+        with report_tabs[3]:
+            st.markdown("### Download All Reports")
             with open(st.session_state.zip_path, 'rb') as f:
                 st.download_button(
-                    "Download All Reports (ZIP)",
+                    "📦 Download All Reports (ZIP)",
                     f,
                     file_name=os.path.basename(st.session_state.zip_path),
-                    mime='application/zip'
+                    mime='application/zip',
+                    help="Contains all generated reports in a single ZIP file"
                 )
+            st.info("The ZIP archive contains all reports including regression analysis, differences, and data profiles.")
 
 if __name__ == "__main__":
     main()
