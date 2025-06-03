@@ -124,14 +124,14 @@ class ReportGenerator:
                         self._style_excel_cell(cell, result == 'PASS')
 
                 # 3. Distinct Check Tab
+                distinct_checks = []
+                
                 try:
                     # Get non-numeric columns, fallback to all columns if none found
                     non_numeric_cols = source_df.select_dtypes(exclude=[np.number]).columns
                     if len(non_numeric_cols) == 0:
                         logger.info("No non-numeric columns found, using all columns for distinct check")
                         non_numeric_cols = source_df.columns
-                    
-                    distinct_checks = []
                     
                     for col in non_numeric_cols:
                         try:
@@ -180,9 +180,21 @@ class ReportGenerator:
                                 'Source_Values': 'Error processing column',
                                 'Target_Values': 'Error processing column'
                             })
-                
-                distinct_df = pd.DataFrame(distinct_checks)
-                distinct_df.to_excel(writer, sheet_name='DistinctCheck', index=False)
+                except Exception as e:
+                    logger.error(f"Error in distinct check processing: {str(e)}")
+                    distinct_checks.append({
+                        'Column': 'ERROR',
+                        'Source_Distinct_Count': 'ERROR',
+                        'Target_Distinct_Count': 'ERROR',
+                        'Count_Match': 'ERROR',
+                        'Values_Match': 'ERROR',
+                        'Source_Values': 'Error in distinct check processing',
+                        'Target_Values': 'Error in distinct check processing'
+                    })
+                finally:
+                    # Always create the DataFrame and sheet, even if there were errors
+                    distinct_df = pd.DataFrame(distinct_checks)
+                    distinct_df.to_excel(writer, sheet_name='DistinctCheck', index=False)
                 
             logger.info(f"Enhanced regression report generated: {report_path}")
             return str(report_path)
