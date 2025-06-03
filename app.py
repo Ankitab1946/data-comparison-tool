@@ -722,10 +722,24 @@ def main():
                             profile_paths = engine.generate_profiling_reports("reports")
                             report_paths.update(profile_paths)
                             
-                            # Display profile reports in UI
+                            # Display profile reports in UI with scrolling
                             if 'comparison_profile' in profile_paths:
+                                st.markdown("""
+                                    <style>
+                                        .profile-container {
+                                            height: 600px;
+                                            overflow-y: auto;
+                                            border: 1px solid #e0e0e0;
+                                            border-radius: 4px;
+                                            padding: 10px;
+                                        }
+                                    </style>
+                                """, unsafe_allow_html=True)
+                                
                                 with open(profile_paths['comparison_profile'], 'r') as f:
-                                    st.components.v1.html(f.read(), height=600)
+                                    st.markdown('<div class="profile-container">', unsafe_allow_html=True)
+                                    st.components.v1.html(f.read(), height=None)
+                                    st.markdown('</div>', unsafe_allow_html=True)
                         
                         with st.spinner("Generating Regression report..."):
                             # Enhanced Regression report with multiple checks
