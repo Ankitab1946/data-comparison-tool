@@ -172,6 +172,10 @@ class ReportGenerator:
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             report_path = self.output_dir / f"DifferenceReport_{timestamp}.xlsx"
 
+            # Constants for Excel limitations
+            MAX_ROWS = 1000000  # Excel's limit is 1,048,576 rows
+            CHUNK_SIZE = 900000  # Slightly less than max to account for headers and formatting
+            
             # Merge dataframes to identify differences
             merged = source_df.merge(target_df, on=join_columns, how='outer', 
                                    indicator=True, suffixes=('_source', '_target'))
@@ -193,33 +197,72 @@ class ReportGenerator:
                     f.write("No differences found between source and target datasets.")
                 return str(report_path)
             
-            # Save to Excel with formatting
+            # Define status colors
+            status_colors = {
+                'Deleted': 'FFB6C1',     # Light pink
+                'Left Only': 'FFB6C1',   # Light pink
+                'Inserted': '90EE90',    # Light green
+                'Right Only': '90EE90',  # Light green
+                'Updated': 'FFD700'      # Gold
+            }
+            
+            # Calculate number of chunks needed
+            total_rows = len(merged)
+            num_chunks = (total_rows - 1) // CHUNK_SIZE + 1
+            
+            # Save to Excel with formatting, splitting into multiple sheets if necessary
             with pd.ExcelWriter(str(report_path), engine='openpyxl') as writer:
-                merged.to_excel(writer, sheet_name='Differences', index=False)
+                for chunk_idx in range(num_chunks):
+                    start_idx = chunk_idx * CHUNK_SIZE
+                    end_idx = min((chunk_idx + 1) * CHUNK_SIZE, total_rows)
+                    
+                    # Get chunk of data
+                    chunk = merged.iloc[start_idx:end_idx]
+                    
+                    # Create sheet name
+                    sheet_name = 'Differences' if num_chunks == 1 else f'Differences_{chunk_idx + 1}'
+                    
+                    # Write chunk to Excel
+                    chunk.to_excel(writer, sheet_name=sheet_name, index=False)
+                    
+                    # Apply conditional formatting to chunk
+                    worksheet = writer.sheets[sheet_name]
+                    
+                    # Apply formatting based on status
+                    for idx, status in enumerate(chunk['Status'], start=2):
+                        cell = worksheet.cell(row=idx, column=chunk.columns.get_loc('Status') + 1)
+                        cell.fill = PatternFill(
+                            start_color=status_colors.get(status, 'FFFFFF'),
+                            end_color=status_colors.get(status, 'FFFFFF'),
+                            fill_type='solid'
+                        )
+                    
+                    # Add summary at top of each sheet
+                    summary_data = chunk['Status'].value_counts().to_dict()
+                    worksheet.cell(row=1, column=len(chunk.columns) + 2, value="Summary:")
+                    for i, (status, count) in enumerate(summary_data.items(), start=2):
+                        worksheet.cell(row=i, column=len(chunk.columns) + 2, value=f"{status}: {count}")
                 
-                # Apply conditional formatting
-                workbook = writer.book
-                worksheet = writer.sheets['Differences']
-                
-                # Apply formatting based on status
-                from openpyxl.styles import PatternFill
-                
-                # Define status colors
-                status_colors = {
-                    'Deleted': 'FFB6C1',     # Light pink
-                    'Left Only': 'FFB6C1',   # Light pink
-                    'Inserted': '90EE90',    # Light green
-                    'Right Only': '90EE90',  # Light green
-                    'Updated': 'FFD700'      # Gold
-                }
-                
-                for idx, status in enumerate(merged['Status'], start=2):
-                    cell = worksheet.cell(row=idx, column=merged.columns.get_loc('Status') + 1)
-                    cell.fill = PatternFill(
-                        start_color=status_colors.get(status, 'FFFFFF'),
-                        end_color=status_colors.get(status, 'FFFFFF'),
-                        fill_type='solid'
-                    )
+                # Add summary sheet
+                summary_df = pd.DataFrame({
+                    'Description': [
+                        'Total Rows',
+                        'Number of Sheets',
+                        'Rows per Sheet',
+                        'Deleted Records',
+                        'Inserted Records',
+                        'Updated Records'
+                    ],
+                    'Value': [
+                        total_rows,
+                        num_chunks,
+                        CHUNK_SIZE,
+                        sum(merged['Status'] == 'Deleted'),
+                        sum(merged['Status'] == 'Inserted'),
+                        sum(merged['Status'] == 'Updated')
+                    ]
+                })
+                summary_df.to_excel(writer, sheet_name='Summary', index=False)
             
             logger.info(f"Difference report generated: {report_path}")
             return str(report_path)
