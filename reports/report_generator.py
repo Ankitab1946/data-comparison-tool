@@ -16,19 +16,24 @@ class ReportGenerator:
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
         
-    def _style_excel_cell(self, value: bool) -> Dict[str, Any]:
-        """Return cell styling based on pass/fail status."""
-        if value:
-            return {
-                'fill': {'fgColor': {'rgb': '90EE90'},  # Light green
-                        'patternType': 'solid'},
-                'font': {'color': {'rgb': '006400'}}    # Dark green
-            }
-        return {
-            'fill': {'fgColor': {'rgb': 'FFB6C1'},     # Light pink
-                    'patternType': 'solid'},
-            'font': {'color': {'rgb': '8B0000'}}        # Dark red
-        }
+    def _style_excel_cell(self, cell, is_pass: bool):
+        """Apply styling to Excel cell based on pass/fail status."""
+        from openpyxl.styles import PatternFill, Font, Color
+        
+        if is_pass:
+            cell.fill = PatternFill(
+                start_color='90EE90',  # Light green
+                end_color='90EE90',
+                fill_type='solid'
+            )
+            cell.font = Font(color='006400')  # Dark green
+        else:
+            cell.fill = PatternFill(
+                start_color='FFB6C1',  # Light pink
+                end_color='FFB6C1',
+                fill_type='solid'
+            )
+            cell.font = Font(color='8B0000')  # Dark red
 
     def _calculate_aggregations(self, df: pd.DataFrame, numeric_cols: List[str]) -> pd.DataFrame:
         """Calculate aggregations for numeric columns."""
@@ -68,14 +73,11 @@ class ReportGenerator:
                 count_df.to_excel(writer, sheet_name='CountCheck', index=False)
                 
                 # Apply conditional formatting
-                workbook = writer.book
                 count_sheet = writer.sheets['CountCheck']
                 for idx, result in enumerate(count_df['Result'], start=2):
                     if result != 'BASELINE':
                         cell = count_sheet.cell(row=idx, column=3)
-                        style = self._style_excel_cell(result == 'PASS')
-                        cell.fill = workbook.styles.fills.add(**style['fill'])
-                        cell.font = workbook.styles.fonts.add(**style['font'])
+                        self._style_excel_cell(cell, result == 'PASS')
 
                 # 2. Aggregation Check Tab
                 numeric_cols = source_df.select_dtypes(include=[np.number]).columns
@@ -104,9 +106,14 @@ class ReportGenerator:
                 agg_sheet = writer.sheets['AggregationCheck']
                 for idx, result in enumerate(agg_df['Result'], start=2):
                     cell = agg_sheet.cell(row=idx, column=5)
-                    style = self._style_excel_cell(result == 'PASS')
-                    cell.fill = workbook.styles.fills.add(**style['fill'])
-                    cell.font = workbook.styles.fonts.add(**style['font'])
+                    self._style_excel_cell(cell, result == 'PASS')
+
+                # Apply conditional formatting for distinct check
+                distinct_sheet = writer.sheets['DistinctCheck']
+                for idx, row in enumerate(distinct_df.itertuples(), start=2):
+                    for col_idx, result in [(4, row.Count_Match), (5, row.Values_Match)]:
+                        cell = distinct_sheet.cell(row=idx, column=col_idx)
+                        self._style_excel_cell(cell, result == 'PASS')
 
                 # 3. Distinct Check Tab
                 non_numeric_cols = source_df.select_dtypes(exclude=[np.number]).columns
@@ -132,15 +139,6 @@ class ReportGenerator:
                 distinct_df = pd.DataFrame(distinct_checks)
                 distinct_df.to_excel(writer, sheet_name='DistinctCheck', index=False)
                 
-                # Apply conditional formatting
-                distinct_sheet = writer.sheets['DistinctCheck']
-                for idx, row in enumerate(distinct_df.itertuples(), start=2):
-                    for col_idx, result in [(4, row.Count_Match), (5, row.Values_Match)]:
-                        cell = distinct_sheet.cell(row=idx, column=col_idx)
-                        style = self._style_excel_cell(result == 'PASS')
-                        cell.fill = workbook.styles.fills.add(**style['fill'])
-                        cell.font = workbook.styles.fonts.add(**style['font'])
-            
             logger.info(f"Enhanced regression report generated: {report_path}")
             return str(report_path)
             
@@ -188,19 +186,24 @@ class ReportGenerator:
                 workbook = writer.book
                 worksheet = writer.sheets['Differences']
                 
+                # Apply formatting based on status
+                from openpyxl.styles import PatternFill
+                
                 # Define status colors
                 status_colors = {
-                    'Deleted': 'FFB6C1',  # Light pink
-                    'Inserted': '90EE90',  # Light green
-                    'Updated': 'FFD700'    # Gold
+                    'Deleted': 'FFB6C1',     # Light pink
+                    'Left Only': 'FFB6C1',   # Light pink
+                    'Inserted': '90EE90',    # Light green
+                    'Right Only': '90EE90',  # Light green
+                    'Updated': 'FFD700'      # Gold
                 }
                 
-                # Apply formatting based on status
                 for idx, status in enumerate(merged['Status'], start=2):
                     cell = worksheet.cell(row=idx, column=merged.columns.get_loc('Status') + 1)
-                    cell.fill = workbook.styles.fills.add(
-                        fgColor=status_colors.get(status, 'FFFFFF'),
-                        patternType='solid'
+                    cell.fill = PatternFill(
+                        start_color=status_colors.get(status, 'FFFFFF'),
+                        end_color=status_colors.get(status, 'FFFFFF'),
+                        fill_type='solid'
                     )
             
             logger.info(f"Difference report generated: {report_path}")
