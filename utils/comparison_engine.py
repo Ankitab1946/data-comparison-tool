@@ -145,23 +145,61 @@ class ComparisonEngine:
                     results['source_unmatched_rows'] = merged[merged['_merge'] == 'left_only'].drop('_merge', axis=1)
                     results['target_unmatched_rows'] = merged[merged['_merge'] == 'right_only'].drop('_merge', axis=1)
                     
-                    # Generate comparison report
+                    # Generate detailed comparison report
                     report_lines = []
-                    report_lines.append("Comparison Report")
-                    report_lines.append("-" * 50)
+                    report_lines.append("DataCompy Comparison Report")
+                    report_lines.append("=" * 50)
+                    report_lines.append("\nSummary:")
+                    report_lines.append("-" * 20)
                     report_lines.append(f"Source rows: {len(source)}")
                     report_lines.append(f"Target rows: {len(target)}")
                     report_lines.append(f"Unmatched in source: {len(results['source_unmatched_rows'])}")
                     report_lines.append(f"Unmatched in target: {len(results['target_unmatched_rows'])}")
                     
+                    # Add column comparison
+                    report_lines.append("\nColumn Analysis:")
+                    report_lines.append("-" * 20)
+                    for col in source.columns:
+                        report_lines.append(f"\nColumn: {col}")
+                        if col in results['column_summary']:
+                            summary = results['column_summary'][col]
+                            report_lines.append(f"Source null count: {summary['source_null_count']}")
+                            report_lines.append(f"Target null count: {summary['target_null_count']}")
+                            report_lines.append(f"Source unique count: {summary['source_unique_count']}")
+                            report_lines.append(f"Target unique count: {summary['target_unique_count']}")
+                            if 'source_sum' in summary:  # Numeric columns
+                                report_lines.append(f"Source sum: {summary['source_sum']}")
+                                report_lines.append(f"Target sum: {summary['target_sum']}")
+                                report_lines.append(f"Source mean: {summary['source_mean']}")
+                                report_lines.append(f"Target mean: {summary['target_mean']}")
+                    
                     # Add value distribution for join columns
+                    report_lines.append("\nJoin Columns Analysis:")
+                    report_lines.append("-" * 20)
                     if results['distinct_values']:
-                        report_lines.append("\nValue Distribution in Join Columns:")
                         for col in self.join_columns:
                             if col in results['distinct_values']:
-                                report_lines.append(f"\n{col}:")
+                                report_lines.append(f"\nJoin Column: {col}")
                                 report_lines.append(f"Source unique values: {results['distinct_values'][col]['source_count']}")
                                 report_lines.append(f"Target unique values: {results['distinct_values'][col]['target_count']}")
+                                report_lines.append("Sample values comparison:")
+                                s_vals = list(results['distinct_values'][col]['source_values'].items())[:5]
+                                t_vals = list(results['distinct_values'][col]['target_values'].items())[:5]
+                                report_lines.append("Source top 5: " + ", ".join(f"{v}({c})" for v, c in s_vals))
+                                report_lines.append("Target top 5: " + ", ".join(f"{v}({c})" for v, c in t_vals))
+                    
+                    # Add sample of unmatched rows
+                    if len(results['source_unmatched_rows']) > 0:
+                        report_lines.append("\nSample Unmatched Rows in Source:")
+                        report_lines.append("-" * 20)
+                        sample = results['source_unmatched_rows'].head(5).to_string()
+                        report_lines.append(sample)
+                    
+                    if len(results['target_unmatched_rows']) > 0:
+                        report_lines.append("\nSample Unmatched Rows in Target:")
+                        report_lines.append("-" * 20)
+                        sample = results['target_unmatched_rows'].head(5).to_string()
+                        report_lines.append(sample)
                     
                     results['datacompy_report'] = "\n".join(report_lines)
                     
