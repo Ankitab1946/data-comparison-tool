@@ -7,6 +7,8 @@ from pathlib import Path
 from datetime import datetime
 from typing import Dict, Any, List, Tuple
 import logging
+from openpyxl.styles import PatternFill, Font, Color
+from openpyxl.utils import get_column_letter
 
 logger = logging.getLogger(__name__)
 
@@ -18,21 +20,11 @@ class ReportGenerator:
         
     def _style_excel_cell(self, cell, is_pass: bool):
         """Apply styling to Excel cell based on pass/fail status."""
-        from openpyxl.styles import PatternFill, Font, Color
-        
         if is_pass:
-            cell.fill = PatternFill(
-                start_color='90EE90',  # Light green
-                end_color='90EE90',
-                fill_type='solid'
-            )
+            cell.fill = PatternFill(start_color='90EE90', end_color='90EE90', fill_type='solid')  # Light green
             cell.font = Font(color='006400')  # Dark green
         else:
-            cell.fill = PatternFill(
-                start_color='FFB6C1',  # Light pink
-                end_color='FFB6C1',
-                fill_type='solid'
-            )
+            cell.fill = PatternFill(start_color='FFB6C1', end_color='FFB6C1', fill_type='solid')  # Light pink
             cell.font = Font(color='8B0000')  # Dark red
 
     def _calculate_aggregations(self, df: pd.DataFrame, numeric_cols: List[str]) -> pd.DataFrame:
@@ -104,21 +96,15 @@ class ReportGenerator:
                     cell = agg_sheet.cell(row=idx, column=5)
                     self._style_excel_cell(cell, result == 'PASS')
 
-                # Apply conditional formatting for distinct check
-                distinct_sheet = writer.sheets['DistinctCheck']
-                for idx, row in enumerate(distinct_df.itertuples(), start=2):
-                    for col_idx, result in [(4, row.Count_Match), (5, row.Values_Match)]:
-                        cell = distinct_sheet.cell(row=idx, column=col_idx)
-                        self._style_excel_cell(cell, result == 'PASS')
-
                 # 3. Distinct Check Tab
                 # Create worksheet
-                distinct_sheet = writer.book.create_sheet('dc')
+                distinct_sheet = writer.book.create_sheet('DistinctCheck')
                 
                 # Write headers
-                headers = ['Column', 'Source Count', 'Target Count', 'Count Match', 'Values Match', 'Source Values', 'Target Values']
+                headers = ['Column', 'Source Distinct Count', 'Target Distinct Count', 'Count Match', 'Values Match', 'Source Values', 'Target Values']
                 for col_idx, header in enumerate(headers, start=1):
-                    distinct_sheet.cell(row=1, column=col_idx, value=header)
+                    cell = distinct_sheet.cell(row=1, column=col_idx, value=header)
+                    cell.font = Font(bold=True)
                 
                 # Get non-numeric columns
                 non_numeric_cols = source_df.select_dtypes(exclude=['number']).columns
@@ -154,12 +140,19 @@ class ReportGenerator:
                     for col_idx, value in enumerate(values, start=1):
                         cell = distinct_sheet.cell(row=row_idx, column=col_idx, value=value)
                         if col_idx in [4, 5]:  # Format match columns
-                            self._style_excel_cell(cell, value == 'PASS')
+                            fill_color = PatternFill(start_color='90EE90' if value == 'PASS' else 'FFB6C1', 
+                                                   end_color='90EE90' if value == 'PASS' else 'FFB6C1',
+                                                   fill_type='solid')
+                            cell.fill = fill_color
                     row_idx += 1
                 
                 # Write message if no columns processed
                 if row_idx == 2:
                     distinct_sheet.cell(row=2, column=1, value='No non-numeric columns found')
+                
+                # Adjust column widths
+                for col_idx in range(1, len(headers) + 1):
+                    distinct_sheet.column_dimensions[get_column_letter(col_idx)].width = 20
                 
             logger.info(f"Enhanced regression report generated: {report_path}")
             return str(report_path)
