@@ -721,25 +721,6 @@ def main():
                             # Generate profile reports
                             profile_paths = engine.generate_profiling_reports("reports")
                             report_paths.update(profile_paths)
-                            
-                            # Display profile reports in UI with scrolling
-                            if 'comparison_profile' in profile_paths:
-                                st.markdown("""
-                                    <style>
-                                        .profile-container {
-                                            height: 600px;
-                                            overflow-y: auto;
-                                            border: 1px solid #e0e0e0;
-                                            border-radius: 4px;
-                                            padding: 10px;
-                                        }
-                                    </style>
-                                """, unsafe_allow_html=True)
-                                
-                                with open(profile_paths['comparison_profile'], 'r') as f:
-                                    st.markdown('<div class="profile-container">', unsafe_allow_html=True)
-                                    st.components.v1.html(f.read(), height=None)
-                                    st.markdown('</div>', unsafe_allow_html=True)
                         
                         with st.spinner("Generating Regression report..."):
                             # Enhanced Regression report with multiple checks
@@ -834,16 +815,42 @@ def main():
             
         with report_tabs[2]:
             st.markdown("### Profile Reports")
+            # Add custom CSS for profile container
+            st.markdown("""
+                <style>
+                    .profile-container {
+                        height: 600px;
+                        overflow-y: auto;
+                        border: 1px solid #e0e0e0;
+                        border-radius: 4px;
+                        padding: 10px;
+                        margin-top: 10px;
+                    }
+                </style>
+            """, unsafe_allow_html=True)
+            
+            # Display download buttons and preview for each profile report
             for report_type, path in st.session_state.report_paths.items():
                 if report_type.startswith('profile'):
-                    with open(path, 'rb') as f:
-                        st.download_button(
-                            f"📈 Download {report_type.replace('profile_', '').replace('_', ' ').title()} Profile",
-                            f,
-                            file_name=os.path.basename(path),
-                            mime='text/html',
-                            help="Detailed data profiling analysis"
-                        )
+                    col1, col2 = st.columns([1, 3])
+                    with col1:
+                        with open(path, 'rb') as f:
+                            st.download_button(
+                                f"📈 Download {report_type.replace('profile_', '').replace('_', ' ').title()} Profile",
+                                f,
+                                file_name=os.path.basename(path),
+                                mime='text/html',
+                                help="Detailed data profiling analysis"
+                            )
+                    
+                    # Show preview for comparison profile
+                    if report_type == 'comparison_profile':
+                        with col2:
+                            st.write("Preview:")
+                            with open(path, 'r') as f:
+                                st.markdown('<div class="profile-container">', unsafe_allow_html=True)
+                                st.components.v1.html(f.read(), height=None)
+                                st.markdown('</div>', unsafe_allow_html=True)
         
         with report_tabs[3]:
             st.markdown("### Download All Reports")
