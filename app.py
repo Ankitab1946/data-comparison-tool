@@ -66,6 +66,108 @@ def create_mapping_editor(mapping_data, target_columns, key_suffix=""):
         st.error(f"Error creating mapping editor: {str(e)}")
         return None
 
+def get_connection_inputs(source_type: str, prefix: str) -> Dict[str, Any]:
+    """Get connection parameters based on source type."""
+    params = {}
+    
+    if source_type in ['SQL Server', 'Teradata']:
+        # Convert source type to the format expected by DataLoader
+        db_type = source_type.lower().replace(' ', '_')
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            params['server'] = st.text_input(
+                f"{source_type} Server",
+                key=f"{prefix}_server"
+            )
+            params['database'] = st.text_input(
+                "Database Name",
+                key=f"{prefix}_database"
+            )
+            # Add Windows Authentication option
+            use_windows_auth = st.checkbox(
+                "Use Windows Authentication",
+                key=f"{prefix}_windows_auth"
+            )
+        with col2:
+            if not use_windows_auth:
+                params['username'] = st.text_input(
+                    "Username",
+                    key=f"{prefix}_username"
+                )
+                params['password'] = st.text_input(
+                    "Password",
+                    type="password",
+                    key=f"{prefix}_password"
+                )
+            else:
+                params['trusted_connection'] = True
+        
+        params['type'] = db_type
+        
+        # Option to use query or table
+        query_type = st.radio(
+            "Select Input Type",
+            ["Table", "Query"],
+            key=f"{prefix}_query_type"
+        )
+        if query_type == "Table":
+            params['table'] = st.text_input(
+                "Table Name",
+                key=f"{prefix}_table"
+            )
+        else:
+            params['query'] = st.text_area(
+                "SQL Query",
+                key=f"{prefix}_query"
+            )
+            
+    elif source_type == 'Stored Procs':
+        col1, col2 = st.columns(2)
+        with col1:
+            params['server'] = st.text_input("Database Server")
+            params['database'] = st.text_input("Database Name")
+        with col2:
+            params['username'] = st.text_input("Username")
+            params['password'] = st.text_input("Password", type="password")
+        
+        params['type'] = 'sql_server'  # Default to SQL Server for stored procs
+        params['proc_name'] = st.text_input("Stored Procedure Name")
+        
+        # Optional procedure parameters
+        if st.checkbox("Add Procedure Parameters"):
+            param_count = st.number_input("Number of Parameters", min_value=1, value=1)
+            params['params'] = {}
+            for i in range(param_count):
+                col1, col2 = st.columns(2)
+                with col1:
+                    param_name = st.text_input(f"Parameter {i+1} Name")
+                with col2:
+                    param_value = st.text_input(f"Parameter {i+1} Value")
+                if param_name:
+                    params['params'][param_name] = param_value
+                    
+    elif source_type == 'API':
+        params['url'] = st.text_input("API URL")
+        params['method'] = st.selectbox("HTTP Method", ["GET", "POST"])
+        
+        if st.checkbox("Add Headers"):
+            params['headers'] = {}
+            header_count = st.number_input("Number of Headers", min_value=1, value=1)
+            for i in range(header_count):
+                col1, col2 = st.columns(2)
+                with col1:
+                    header_name = st.text_input(f"Header {i+1} Name")
+                with col2:
+                    header_value = st.text_input(f"Header {i+1} Value")
+                if header_name:
+                    params['headers'][header_name] = header_value
+        
+        if params['method'] == "POST":
+            params['data'] = st.text_area("Request Body (JSON)")
+            
+    return params
+
 # Constants
 SUPPORTED_SOURCES = [
     'CSV file',
@@ -213,105 +315,6 @@ def load_data(source_type: str, file_upload, connection_params: Dict[str, Any] =
         
     else:
         raise ValueError(f"Unsupported source type: {source_type}")
-
-def get_connection_inputs(source_type: str, prefix: str) -> Dict[str, Any]:
-    """Get connection parameters based on source type."""
-    params = {}
-    
-    if source_type in ['SQL Server', 'Teradata']:
-        col1, col2 = st.columns(2)
-        with col1:
-            params['server'] = st.text_input(
-                f"{source_type} Server",
-                key=f"{prefix}_server"
-            )
-            params['database'] = st.text_input(
-                "Database Name",
-                key=f"{prefix}_database"
-            )
-            # Add Windows Authentication option
-            use_windows_auth = st.checkbox(
-                "Use Windows Authentication",
-                key=f"{prefix}_windows_auth"
-            )
-        with col2:
-            if not use_windows_auth:
-                params['username'] = st.text_input(
-                    "Username",
-                    key=f"{prefix}_username"
-                )
-                params['password'] = st.text_input(
-                    "Password",
-                    type="password",
-                    key=f"{prefix}_password"
-                )
-            else:
-                params['trusted_connection'] = True
-        
-        params['type'] = source_type
-        
-        # Option to use query or table
-        query_type = st.radio(
-            "Select Input Type",
-            ["Table", "Query"],
-            key=f"{prefix}_query_type"
-        )
-        if query_type == "Table":
-            params['table'] = st.text_input(
-                "Table Name",
-                key=f"{prefix}_table"
-            )
-        else:
-            params['query'] = st.text_area(
-                "SQL Query",
-                key=f"{prefix}_query"
-            )
-            
-    elif source_type == 'Stored Procs':
-        col1, col2 = st.columns(2)
-        with col1:
-            params['server'] = st.text_input("Database Server")
-            params['database'] = st.text_input("Database Name")
-        with col2:
-            params['username'] = st.text_input("Username")
-            params['password'] = st.text_input("Password", type="password")
-        
-        params['type'] = 'SQL Server'  # Default to SQL Server for stored procs
-        params['proc_name'] = st.text_input("Stored Procedure Name")
-        
-        # Optional procedure parameters
-        if st.checkbox("Add Procedure Parameters"):
-            param_count = st.number_input("Number of Parameters", min_value=1, value=1)
-            params['params'] = {}
-            for i in range(param_count):
-                col1, col2 = st.columns(2)
-                with col1:
-                    param_name = st.text_input(f"Parameter {i+1} Name")
-                with col2:
-                    param_value = st.text_input(f"Parameter {i+1} Value")
-                if param_name:
-                    params['params'][param_name] = param_value
-                    
-    elif source_type == 'API':
-        params['url'] = st.text_input("API URL")
-        params['method'] = st.selectbox("HTTP Method", ["GET", "POST"])
-        
-        if st.checkbox("Add Headers"):
-            params['headers'] = {}
-            header_count = st.number_input("Number of Headers", min_value=1, value=1)
-            for i in range(header_count):
-                col1, col2 = st.columns(2)
-                with col1:
-                    header_name = st.text_input(f"Header {i+1} Name")
-                with col2:
-                    header_value = st.text_input(f"Header {i+1} Value")
-                if header_name:
-                    params['headers'][header_name] = header_value
-        
-        if params['method'] == "POST":
-            params['data'] = st.text_area("Request Body (JSON)")
-            
-    return params
 
 def main():
     # Header
