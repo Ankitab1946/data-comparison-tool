@@ -124,97 +124,55 @@ class ReportGenerator:
                         self._style_excel_cell(cell, result == 'PASS')
 
                 # 3. Distinct Check Tab
-                distinct_checks = []
-                
                 try:
-                    # Ensure dataframes are not None and have data
-                    if source_df is None or target_df is None:
-                        raise ValueError("Source or target DataFrame is None")
-                    
-                    if source_df.empty or target_df.empty:
-                        raise ValueError("Source or target DataFrame is empty")
-                    
-                    # Get common columns between source and target
-                    common_cols = list(set(source_df.columns) & set(target_df.columns))
-                    if not common_cols:
-                        raise ValueError("No common columns found between source and target")
+                    distinct_checks = []
                     
                     # Process each column
-                    for col in common_cols:
+                    for col in source_df.columns:
                         try:
-                            # Convert column to string type for comparison
-                            source_series = source_df[col].fillna('').astype(str)
-                            target_series = target_df[col].fillna('').astype(str)
-                            
-                            # Get distinct values
-                            source_values = sorted(source_series.unique().tolist())
-                            target_values = sorted(target_series.unique().tolist())
-                            
+                            # Get source distinct values
+                            source_values = pd.Series(source_df[col].fillna('NULL')).unique()
                             source_count = len(source_values)
-                            target_count = len(target_values)
                             
-                            # Compare values
-                            values_match = source_values == target_values
-                            count_match = source_count == target_count
+                            # Get target distinct values if column exists
+                            if col in target_df.columns:
+                                target_values = pd.Series(target_df[col].fillna('NULL')).unique()
+                                target_count = len(target_values)
+                                
+                                # Compare values
+                                source_set = set(map(str, source_values))
+                                target_set = set(map(str, target_values))
+                                values_match = source_set == target_set
+                                count_match = source_count == target_count
+                            else:
+                                target_count = 0
+                                values_match = False
+                                count_match = False
                             
-                            # Format display values
-                            def format_display_values(values):
-                                if not values:
-                                    return "No values"
-                                display = ', '.join(str(v) for v in values[:10])
-                                if len(values) > 10:
-                                    display += '...'
-                                return display
+                            # Format values for display
+                            source_display = ', '.join(map(str, source_values[:10]))
+                            if source_count > 10:
+                                source_display += '...'
+                                
+                            target_display = ', '.join(map(str, target_values[:10])) if col in target_df.columns else 'Column not in target'
+                            if target_count > 10:
+                                target_display += '...'
                             
                             distinct_checks.append({
-                                'Column': str(col),
-                                'Source_Distinct_Count': str(source_count),
-                                'Target_Distinct_Count': str(target_count),
+                                'Column': col,
+                                'Source_Distinct_Count': source_count,
+                                'Target_Distinct_Count': target_count,
                                 'Count_Match': 'PASS' if count_match else 'FAIL',
                                 'Values_Match': 'PASS' if values_match else 'FAIL',
-                                'Source_Values': format_display_values(source_values),
-                                'Target_Values': format_display_values(target_values)
+                                'Source_Values': source_display,
+                                'Target_Values': target_display
                             })
                             
                         except Exception as e:
                             logger.warning(f"Error processing column {col}: {str(e)}")
-                            distinct_checks.append({
-                                'Column': str(col),
-                                'Source_Distinct_Count': 'ERROR',
-                                'Target_Distinct_Count': 'ERROR',
-                                'Count_Match': 'ERROR',
-                                'Values_Match': 'ERROR',
-                                'Source_Values': f'Error: {str(e)}',
-                                'Target_Values': f'Error: {str(e)}'
-                            })
-                            
-                except Exception as e:
-                    error_msg = f"Error in distinct check processing: {str(e)}"
-                    logger.error(error_msg)
-                    distinct_checks.append({
-                        'Column': 'ERROR',
-                        'Source_Distinct_Count': 'ERROR',
-                        'Target_Distinct_Count': 'ERROR',
-                        'Count_Match': 'ERROR',
-                        'Values_Match': 'ERROR',
-                        'Source_Values': error_msg,
-                        'Target_Values': error_msg
-                    })
+                            continue
                     
-                finally:
-                    try:
-                        # Ensure we have at least one row of data
-                        if not distinct_checks:
-                            distinct_checks.append({
-                                'Column': 'NO DATA',
-                                'Source_Distinct_Count': 'N/A',
-                                'Target_Distinct_Count': 'N/A',
-                                'Count_Match': 'N/A',
-                                'Values_Match': 'N/A',
-                                'Source_Values': 'No data available',
-                                'Target_Values': 'No data available'
-                            })
-                        
+                    if distinct_checks:
                         # Create DataFrame and write to Excel
                         distinct_df = pd.DataFrame(distinct_checks)
                         distinct_df.to_excel(writer, sheet_name='DistinctCheck', index=False)
@@ -226,13 +184,16 @@ class ReportGenerator:
                                 if result in ['PASS', 'FAIL']:
                                     cell = worksheet.cell(row=idx, column=col_idx)
                                     self._style_excel_cell(cell, result == 'PASS')
-                                    
-                    except Exception as e:
-                        logger.error(f"Error writing DistinctCheck sheet: {str(e)}")
-                        # Create a minimal sheet with error message
-                        pd.DataFrame([{
-                            'Error': f"Failed to create DistinctCheck sheet: {str(e)}"
-                        }]).to_excel(writer, sheet_name='DistinctCheck_Error', index=False)
+                    else:
+                        # Create empty sheet with message if no data
+                        pd.DataFrame({'Message': ['No columns could be processed for distinct check']}).to_excel(
+                            writer, sheet_name='DistinctCheck', index=False)
+                            
+                except Exception as e:
+                    logger.error(f"Error in distinct check: {str(e)}")
+                    # Create error sheet
+                    pd.DataFrame({'Error': [str(e)]}).to_excel(
+                        writer, sheet_name='DistinctCheck', index=False)
                 
             logger.info(f"Enhanced regression report generated: {report_path}")
             return str(report_path)
