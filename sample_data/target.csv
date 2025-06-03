@@ -1,0 +1,13 @@
+id,name,age,department,salary,hire_date
+1,John Smith,30,Engineering,75000,2020-01-15
+2,Jane Doe,28,Marketing,65000,2020-03-20
+3,Bob Johnson,35,Engineering,85000,2019-06-10
+4,Alice Brown,32,HR,60000,2021-02-01
+5,Charlie Wilson,29,Marketing,67000,2020-11-15
+6,Diana Davis,31,Engineering,78000,2019-09-05
+7,Eve Miller,27,HR,58000,2021-05-10
+8,Frank Garcia,33,Engineering,82000,2018-12-01
+9,Grace Lee,26,Marketing,63000,2021-08-20
+10,Henry Taylor,34,Engineering,85000,2018-03-15
+11,Sarah Johnson,29,Sales,55000,2021-10-01
+12,Mike Anderson,31,Sales,57000,2021-09-15
