@@ -1,93 +1,207 @@
 """Report generation utilities for the Data Comparison Tool."""
 import pandas as pd
+import numpy as np
 import os
 import zipfile
 from pathlib import Path
 from datetime import datetime
-from typing import Dict, Any
+from typing import Dict, Any, List, Tuple
 import logging
 
 logger = logging.getLogger(__name__)
 
 class ReportGenerator:
     def __init__(self, output_dir: str = "reports"):
-        """
-        Initialize the report generator.
-        
-        Args:
-            output_dir: Directory to save reports
-        """
+        """Initialize the report generator."""
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
         
-    def generate_regression_report(self, comparison_results: Dict[str, Any]) -> str:
-        """
-        Generate a regression report from comparison results.
-        
-        Args:
-            comparison_results: Results from comparison engine
-            
-        Returns:
-            Path to the generated report file
-        """
+    def _style_excel_cell(self, value: bool) -> Dict[str, Any]:
+        """Return cell styling based on pass/fail status."""
+        if value:
+            return {
+                'fill': {'fgColor': {'rgb': '90EE90'},  # Light green
+                        'patternType': 'solid'},
+                'font': {'color': {'rgb': '006400'}}    # Dark green
+            }
+        return {
+            'fill': {'fgColor': {'rgb': 'FFB6C1'},     # Light pink
+                    'patternType': 'solid'},
+            'font': {'color': {'rgb': '8B0000'}}        # Dark red
+        }
+
+    def _calculate_aggregations(self, df: pd.DataFrame, numeric_cols: List[str]) -> pd.DataFrame:
+        """Calculate aggregations for numeric columns."""
+        aggs = []
+        for col in numeric_cols:
+            aggs.append({
+                'Column': col,
+                'Sum': df[col].sum(),
+                'Mean': df[col].mean(),
+                'Min': df[col].min(),
+                'Max': df[col].max(),
+                'StdDev': df[col].std()
+            })
+        return pd.DataFrame(aggs)
+
+    def _get_distinct_values(self, df: pd.DataFrame, column: str) -> Tuple[int, List]:
+        """Get distinct value count and list for a column."""
+        distinct_values = df[column].dropna().unique()
+        return len(distinct_values), sorted(distinct_values)
+
+    def generate_regression_report(self, comparison_results: Dict[str, Any], 
+                                 source_df: pd.DataFrame, 
+                                 target_df: pd.DataFrame) -> str:
+        """Generate enhanced regression report with multiple checks."""
         try:
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             report_path = self.output_dir / f"regression_report_{timestamp}.xlsx"
             
             with pd.ExcelWriter(str(report_path), engine='openpyxl') as writer:
-                # Summary sheet
-                summary_data = {
-                    'Metric': ['Rows Match', 'Columns Match', 'Overall Match', 'Source Row Count', 'Target Row Count'],
-                    'Value': [
-                        comparison_results.get('rows_match', False),
-                        comparison_results.get('columns_match', False),
-                        comparison_results.get('match_status', False),
-                        comparison_results.get('row_counts', {}).get('source_count', 0),
-                        comparison_results.get('row_counts', {}).get('target_count', 0)
-                    ]
+                # 1. Count Check Tab
+                count_data = {
+                    'Metric': ['Source Count', 'Target Count'],
+                    'Value': [len(source_df), len(target_df)],
+                    'Result': ['BASELINE', 'PASS' if len(source_df) == len(target_df) else 'FAIL']
                 }
-                pd.DataFrame(summary_data).to_excel(writer, sheet_name='Summary', index=False)
+                count_df = pd.DataFrame(count_data)
+                count_df.to_excel(writer, sheet_name='CountCheck', index=False)
                 
-                # Column summary sheet
-                if 'column_summary' in comparison_results:
-                    column_df = pd.DataFrame(comparison_results['column_summary']).T
-                    column_df.to_excel(writer, sheet_name='Column_Summary')
+                # Apply conditional formatting
+                workbook = writer.book
+                count_sheet = writer.sheets['CountCheck']
+                for idx, result in enumerate(count_df['Result'], start=2):
+                    if result != 'BASELINE':
+                        cell = count_sheet.cell(row=idx, column=3)
+                        style = self._style_excel_cell(result == 'PASS')
+                        cell.fill = workbook.styles.fills.add(**style['fill'])
+                        cell.font = workbook.styles.fonts.add(**style['font'])
+
+                # 2. Aggregation Check Tab
+                numeric_cols = source_df.select_dtypes(include=[np.number]).columns
+                source_aggs = self._calculate_aggregations(source_df, numeric_cols)
+                target_aggs = self._calculate_aggregations(target_df, numeric_cols)
                 
-                # Distinct values sheet
-                if 'distinct_values' in comparison_results:
-                    distinct_data = []
-                    for col, data in comparison_results['distinct_values'].items():
-                        distinct_data.append({
+                agg_comparison = []
+                for col in numeric_cols:
+                    source_row = source_aggs[source_aggs['Column'] == col].iloc[0]
+                    target_row = target_aggs[target_aggs['Column'] == col].iloc[0]
+                    
+                    for metric in ['Sum', 'Mean', 'Min', 'Max', 'StdDev']:
+                        matches = np.isclose(source_row[metric], target_row[metric], rtol=1e-05)
+                        agg_comparison.append({
                             'Column': col,
-                            'Source_Distinct_Count': data.get('source_count', 0),
-                            'Target_Distinct_Count': data.get('target_count', 0),
-                            'Values_Match': data.get('matching', False)
+                            'Metric': metric,
+                            'Source': source_row[metric],
+                            'Target': target_row[metric],
+                            'Result': 'PASS' if matches else 'FAIL'
                         })
-                    if distinct_data:
-                        pd.DataFrame(distinct_data).to_excel(writer, sheet_name='Distinct_Values', index=False)
+                
+                agg_df = pd.DataFrame(agg_comparison)
+                agg_df.to_excel(writer, sheet_name='AggregationCheck', index=False)
+                
+                # Apply conditional formatting
+                agg_sheet = writer.sheets['AggregationCheck']
+                for idx, result in enumerate(agg_df['Result'], start=2):
+                    cell = agg_sheet.cell(row=idx, column=5)
+                    style = self._style_excel_cell(result == 'PASS')
+                    cell.fill = workbook.styles.fills.add(**style['fill'])
+                    cell.font = workbook.styles.fonts.add(**style['font'])
+
+                # 3. Distinct Check Tab
+                non_numeric_cols = source_df.select_dtypes(exclude=[np.number]).columns
+                distinct_checks = []
+                
+                for col in non_numeric_cols:
+                    source_count, source_values = self._get_distinct_values(source_df, col)
+                    target_count, target_values = self._get_distinct_values(target_df, col)
+                    
+                    values_match = set(source_values) == set(target_values)
+                    count_match = source_count == target_count
+                    
+                    distinct_checks.append({
+                        'Column': col,
+                        'Source_Distinct_Count': source_count,
+                        'Target_Distinct_Count': target_count,
+                        'Count_Match': 'PASS' if count_match else 'FAIL',
+                        'Values_Match': 'PASS' if values_match else 'FAIL',
+                        'Source_Values': ', '.join(map(str, source_values[:10])) + ('...' if len(source_values) > 10 else ''),
+                        'Target_Values': ', '.join(map(str, target_values[:10])) + ('...' if len(target_values) > 10 else '')
+                    })
+                
+                distinct_df = pd.DataFrame(distinct_checks)
+                distinct_df.to_excel(writer, sheet_name='DistinctCheck', index=False)
+                
+                # Apply conditional formatting
+                distinct_sheet = writer.sheets['DistinctCheck']
+                for idx, row in enumerate(distinct_df.itertuples(), start=2):
+                    for col_idx, result in [(4, row.Count_Match), (5, row.Values_Match)]:
+                        cell = distinct_sheet.cell(row=idx, column=col_idx)
+                        style = self._style_excel_cell(result == 'PASS')
+                        cell.fill = workbook.styles.fills.add(**style['fill'])
+                        cell.font = workbook.styles.fonts.add(**style['font'])
             
-            logger.info(f"Regression report generated: {report_path}")
+            logger.info(f"Enhanced regression report generated: {report_path}")
             return str(report_path)
             
         except Exception as e:
             logger.error(f"Error generating regression report: {str(e)}")
             raise
-    
-    def generate_difference_report(self, differences: pd.DataFrame) -> str:
-        """
-        Generate a difference report.
-        
-        Args:
-            differences: DataFrame containing differences
-            
-        Returns:
-            Path to the generated report file
-        """
+
+    def generate_difference_report(self, source_df: pd.DataFrame, target_df: pd.DataFrame, 
+                                 join_columns: List[str]) -> str:
+        """Generate enhanced side-by-side difference report."""
         try:
+            if source_df.empty or target_df.empty:
+                logger.info("No data to compare in difference report")
+                return None
+
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            report_path = self.output_dir / f"differences_report_{timestamp}.xlsx"
+            report_path = self.output_dir / f"DifferenceReport_{timestamp}.xlsx"
+
+            # Merge dataframes to identify differences
+            merged = source_df.merge(target_df, on=join_columns, how='outer', 
+                                   indicator=True, suffixes=('_source', '_target'))
             
-            differences.to_excel(str(report_path), index=False)
+            # Create comparison status column
+            merged['Status'] = merged['_merge'].map({
+                'left_only': 'Deleted',
+                'right_only': 'Inserted',
+                'both': 'Updated'
+            })
+            
+            # Remove the merge indicator column
+            merged = merged.drop('_merge', axis=1)
+            
+            # If there are no differences
+            if merged['Status'].isin(['Updated']).all():
+                logger.info("No differences found between source and target")
+                with open(report_path, 'w') as f:
+                    f.write("No differences found between source and target datasets.")
+                return str(report_path)
+            
+            # Save to Excel with formatting
+            with pd.ExcelWriter(str(report_path), engine='openpyxl') as writer:
+                merged.to_excel(writer, sheet_name='Differences', index=False)
+                
+                # Apply conditional formatting
+                workbook = writer.book
+                worksheet = writer.sheets['Differences']
+                
+                # Define status colors
+                status_colors = {
+                    'Deleted': 'FFB6C1',  # Light pink
+                    'Inserted': '90EE90',  # Light green
+                    'Updated': 'FFD700'    # Gold
+                }
+                
+                # Apply formatting based on status
+                for idx, status in enumerate(merged['Status'], start=2):
+                    cell = worksheet.cell(row=idx, column=merged.columns.get_loc('Status') + 1)
+                    cell.fill = workbook.styles.fills.add(
+                        fgColor=status_colors.get(status, 'FFFFFF'),
+                        patternType='solid'
+                    )
             
             logger.info(f"Difference report generated: {report_path}")
             return str(report_path)
@@ -95,24 +209,16 @@ class ReportGenerator:
         except Exception as e:
             logger.error(f"Error generating difference report: {str(e)}")
             raise
-    
+
     def create_report_archive(self, report_paths: Dict[str, str]) -> str:
-        """
-        Create a ZIP archive containing all reports.
-        
-        Args:
-            report_paths: Dictionary of report types and their file paths
-            
-        Returns:
-            Path to the ZIP archive
-        """
+        """Create a ZIP archive containing all reports."""
         try:
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             zip_path = self.output_dir / f"all_reports_{timestamp}.zip"
             
             with zipfile.ZipFile(str(zip_path), 'w') as zipf:
                 for report_type, path in report_paths.items():
-                    if os.path.exists(path):
+                    if path and os.path.exists(path):
                         zipf.write(path, os.path.basename(path))
             
             logger.info(f"Report archive created: {zip_path}")
