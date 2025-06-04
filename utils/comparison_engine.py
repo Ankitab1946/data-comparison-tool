@@ -96,6 +96,37 @@ class ComparisonEngine:
                       if not m['exclude'] and m['target']}
         target = target.rename(columns=rename_dict)
 
+        # Convert data types for compatibility
+        for mapping in self.mapping:
+            if mapping['exclude'] or not mapping['target']:
+                continue
+
+            source_col = mapping['source']
+            try:
+                # Convert both columns to string if either is object/string type
+                if (source[source_col].dtype == 'object' or 
+                    target[source_col].dtype == 'object' or
+                    'char' in str(source[source_col].dtype).lower() or 
+                    'char' in str(target[source_col].dtype).lower()):
+                    source[source_col] = source[source_col].astype(str)
+                    target[source_col] = target[source_col].astype(str)
+                # For numeric columns, convert to float64 for maximum compatibility
+                elif np.issubdtype(source[source_col].dtype, np.number):
+                    source[source_col] = source[source_col].astype(np.float64)
+                    target[source_col] = target[source_col].astype(np.float64)
+                # For datetime columns
+                elif np.issubdtype(source[source_col].dtype, np.datetime64):
+                    source[source_col] = pd.to_datetime(source[source_col])
+                    target[source_col] = pd.to_datetime(target[source_col])
+                # For boolean columns
+                elif source[source_col].dtype == bool:
+                    source[source_col] = source[source_col].astype(bool)
+                    target[source_col] = target[source_col].astype(bool)
+            except Exception as e:
+                logger.warning(f"Type conversion failed for column {source_col}: {str(e)}. Converting to string.")
+                source[source_col] = source[source_col].astype(str)
+                target[source_col] = target[source_col].astype(str)
+
         return source, target
 
     def compare(self) -> Dict[str, Any]:
