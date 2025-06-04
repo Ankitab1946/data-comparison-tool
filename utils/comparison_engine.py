@@ -171,101 +171,61 @@ class ComparisonEngine:
                     results['source_unmatched_rows'] = merged[merged['_merge'] == 'left_only'].drop('_merge', axis=1)
                     results['target_unmatched_rows'] = merged[merged['_merge'] == 'right_only'].drop('_merge', axis=1)
                     
-                    # Generate comprehensive comparison report
+                    # Generate detailed comparison report
                     report_lines = []
                     report_lines.append("DataCompy Comparison Report")
-                    report_lines.append("=" * 80)
+                    report_lines.append("=" * 50)
+                    report_lines.append("\nSummary:")
+                    report_lines.append("-" * 20)
+                    report_lines.append(f"Source rows: {len(source)}")
+                    report_lines.append(f"Target rows: {len(target)}")
+                    report_lines.append(f"Unmatched in source: {len(results['source_unmatched_rows'])}")
+                    report_lines.append(f"Unmatched in target: {len(results['target_unmatched_rows'])}")
                     
-                    # Summary Section
-                    report_lines.append("\nSummary")
-                    report_lines.append("=" * 40)
-                    report_lines.append(f"Source rows: {len(source):,}")
-                    report_lines.append(f"Target rows: {len(target):,}")
-                    report_lines.append(f"Unmatched rows in source: {len(results['source_unmatched_rows']):,}")
-                    report_lines.append(f"Unmatched rows in target: {len(results['target_unmatched_rows']):,}")
-                    report_lines.append(f"Number of columns compared: {len(source.columns):,}")
-                    
-                    # Column Analysis Section
-                    report_lines.append("\nColumn Analysis")
-                    report_lines.append("=" * 40)
+                    # Add column comparison
+                    report_lines.append("\nColumn Analysis:")
+                    report_lines.append("-" * 20)
                     for col in source.columns:
                         report_lines.append(f"\nColumn: {col}")
-                        report_lines.append("-" * (len(col) + 8))
-                        
                         if col in results['column_summary']:
                             summary = results['column_summary'][col]
-                            
-                            # Basic stats
-                            report_lines.append("Basic Statistics:")
-                            report_lines.append(f"  Source null count: {summary['source_null_count']:,}")
-                            report_lines.append(f"  Target null count: {summary['target_null_count']:,}")
-                            report_lines.append(f"  Source unique count: {summary['source_unique_count']:,}")
-                            report_lines.append(f"  Target unique count: {summary['target_unique_count']:,}")
-                            
-                            # Numeric column stats
-                            if 'source_sum' in summary:
-                                report_lines.append("\nNumeric Statistics:")
-                                report_lines.append(f"  Source sum: {summary['source_sum']:,.2f}")
-                                report_lines.append(f"  Target sum: {summary['target_sum']:,.2f}")
-                                report_lines.append(f"  Source mean: {summary['source_mean']:,.2f}")
-                                report_lines.append(f"  Target mean: {summary['target_mean']:,.2f}")
-                                report_lines.append(f"  Source std dev: {summary['source_std']:,.2f}")
-                                report_lines.append(f"  Target std dev: {summary['target_std']:,.2f}")
-                            
-                            # Value distribution for all columns
+                            report_lines.append(f"Source null count: {summary['source_null_count']}")
+                            report_lines.append(f"Target null count: {summary['target_null_count']}")
+                            report_lines.append(f"Source unique count: {summary['source_unique_count']}")
+                            report_lines.append(f"Target unique count: {summary['target_unique_count']}")
+                            if 'source_sum' in summary:  # Numeric columns
+                                report_lines.append(f"Source sum: {summary['source_sum']}")
+                                report_lines.append(f"Target sum: {summary['target_sum']}")
+                                report_lines.append(f"Source mean: {summary['source_mean']}")
+                                report_lines.append(f"Target mean: {summary['target_mean']}")
+                    
+                    # Add value distribution for join columns
+                    report_lines.append("\nJoin Columns Analysis:")
+                    report_lines.append("-" * 20)
+                    if results['distinct_values']:
+                        for col in self.join_columns:
                             if col in results['distinct_values']:
-                                dist = results['distinct_values'][col]
-                                report_lines.append("\nValue Distribution:")
-                                report_lines.append(f"  Source unique values: {dist['source_count']:,}")
-                                report_lines.append(f"  Target unique values: {dist['target_count']:,}")
-                                report_lines.append("  Top 5 values (value: count):")
-                                
-                                s_vals = list(dist['source_values'].items())[:5]
-                                t_vals = list(dist['target_values'].items())[:5]
-                                report_lines.append("    Source: " + ", ".join(f"{v}({c:,})" for v, c in s_vals))
-                                report_lines.append("    Target: " + ", ".join(f"{v}({c:,})" for v, c in t_vals))
+                                report_lines.append(f"\nJoin Column: {col}")
+                                report_lines.append(f"Source unique values: {results['distinct_values'][col]['source_count']}")
+                                report_lines.append(f"Target unique values: {results['distinct_values'][col]['target_count']}")
+                                report_lines.append("Sample values comparison:")
+                                s_vals = list(results['distinct_values'][col]['source_values'].items())[:5]
+                                t_vals = list(results['distinct_values'][col]['target_values'].items())[:5]
+                                report_lines.append("Source top 5: " + ", ".join(f"{v}({c})" for v, c in s_vals))
+                                report_lines.append("Target top 5: " + ", ".join(f"{v}({c})" for v, c in t_vals))
                     
-                    # Detailed Analysis of Differences
-                    report_lines.append("\nDetailed Analysis of Differences")
-                    report_lines.append("=" * 40)
-                    
-                    # Sample unmatched rows with full details
+                    # Add sample of unmatched rows
                     if len(results['source_unmatched_rows']) > 0:
                         report_lines.append("\nSample Unmatched Rows in Source:")
-                        report_lines.append("-" * 40)
-                        sample_df = results['source_unmatched_rows'].head(5)
-                        for idx, row in sample_df.iterrows():
-                            report_lines.append(f"\nRow {idx + 1}:")
-                            for col in row.index:
-                                report_lines.append(f"  {col}: {row[col]}")
+                        report_lines.append("-" * 20)
+                        sample = results['source_unmatched_rows'].head(5).to_string()
+                        report_lines.append(sample)
                     
                     if len(results['target_unmatched_rows']) > 0:
                         report_lines.append("\nSample Unmatched Rows in Target:")
-                        report_lines.append("-" * 40)
-                        sample_df = results['target_unmatched_rows'].head(5)
-                        for idx, row in sample_df.iterrows():
-                            report_lines.append(f"\nRow {idx + 1}:")
-                            for col in row.index:
-                                report_lines.append(f"  {col}: {row[col]}")
-                    
-                    # Join Columns Analysis
-                    if self.join_columns:
-                        report_lines.append("\nJoin Columns Analysis")
-                        report_lines.append("=" * 40)
-                        for col in self.join_columns:
-                            report_lines.append(f"\nJoin Column: {col}")
-                            report_lines.append("-" * (len(col) + 13))
-                            
-                            if col in results['distinct_values']:
-                                dist = results['distinct_values'][col]
-                                report_lines.append(f"Unique values: Source={dist['source_count']:,}, Target={dist['target_count']:,}")
-                                report_lines.append("Sample values with counts:")
-                                
-                                s_vals = list(dist['source_values'].items())[:5]
-                                t_vals = list(dist['target_values'].items())[:5]
-                                for i in range(min(len(s_vals), len(t_vals))):
-                                    report_lines.append(f"  Source: {s_vals[i][0]} ({s_vals[i][1]:,})")
-                                    report_lines.append(f"  Target: {t_vals[i][0]} ({t_vals[i][1]:,})")
+                        report_lines.append("-" * 20)
+                        sample = results['target_unmatched_rows'].head(5).to_string()
+                        report_lines.append(sample)
                     
                     results['datacompy_report'] = "\n".join(report_lines)
                     
