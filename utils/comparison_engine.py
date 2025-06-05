@@ -835,30 +835,85 @@ class ComparisonEngine:
         Returns:
             Dictionary containing paths to generated reports
         """
-        output_path = Path(output_dir)
-        output_path.mkdir(parents=True, exist_ok=True)
+        try:
+            output_path = Path(output_dir)
+            output_path.mkdir(parents=True, exist_ok=True)
 
-        # Generate individual profiles
-        source_profile = ProfileReport(self.source_df, title="Source Data Profile")
-        target_profile = ProfileReport(self.target_df, title="Target Data Profile")
+            # Create copies of dataframes to avoid modifying originals
+            source_df = self.source_df.copy()
+            target_df = self.target_df.copy()
 
-        # Save reports
-        source_path = output_path / "source_profile.html"
-        target_path = output_path / "target_profile.html"
-        comparison_path = output_path / "comparison_profile.html"
+            # Convert problematic columns to string
+            for df in [source_df, target_df]:
+                for col in df.columns:
+                    # Check if column type is problematic
+                    col_type = str(df[col].dtype).lower()
+                    if ('object' in col_type or 
+                        'unsupported' in col_type or 
+                        col == 'ColumnNameID' or
+                        any(t in col_type for t in ['char', 'text'])):
+                        df[col] = df[col].fillna('').astype(str)
 
-        source_profile.to_file(str(source_path))
-        target_profile.to_file(str(target_path))
-        
-        # Generate comparison report
-        comparison_report = source_profile.compare(target_profile)
-        comparison_report.to_file(str(comparison_path))
+            # Generate individual profiles with error handling
+            try:
+                source_profile = ProfileReport(source_df, title="Source Data Profile", 
+                                            progress_bar=False, 
+                                            explorative=True)
+            except Exception as e:
+                logger.error(f"Error generating source profile: {str(e)}")
+                source_profile = ProfileReport(source_df.astype(str), 
+                                            title="Source Data Profile",
+                                            progress_bar=False)
 
-        return {
-            'source_profile': str(source_path),
-            'target_profile': str(target_path),
-            'comparison_profile': str(comparison_path)
-        }
+            try:
+                target_profile = ProfileReport(target_df, title="Target Data Profile",
+                                            progress_bar=False,
+                                            explorative=True)
+            except Exception as e:
+                logger.error(f"Error generating target profile: {str(e)}")
+                target_profile = ProfileReport(target_df.astype(str),
+                                            title="Target Data Profile",
+                                            progress_bar=False)
+
+            # Save reports
+            source_path = output_path / "source_profile.html"
+            target_path = output_path / "target_profile.html"
+            comparison_path = output_path / "comparison_profile.html"
+
+            source_profile.to_file(str(source_path))
+            target_profile.to_file(str(target_path))
+            
+            # Generate comparison report with error handling
+            try:
+                comparison_report = source_profile.compare(target_profile)
+                comparison_report.to_file(str(comparison_path))
+            except Exception as e:
+                logger.error(f"Error generating comparison report: {str(e)}")
+                # Create a basic comparison report
+                with open(str(comparison_path), 'w') as f:
+                    f.write("""
+                    <html>
+                    <head><title>Data Comparison Report</title></head>
+                    <body>
+                        <h1>Data Comparison Report</h1>
+                        <p>Error generating detailed comparison report. Please check individual profiles.</p>
+                        <ul>
+                            <li><a href="source_profile.html">Source Profile</a></li>
+                            <li><a href="target_profile.html">Target Profile</a></li>
+                        </ul>
+                    </body>
+                    </html>
+                    """)
+
+            return {
+                'source_profile': str(source_path),
+                'target_profile': str(target_path),
+                'comparison_profile': str(comparison_path)
+            }
+            
+        except Exception as e:
+            logger.error(f"Error in generate_profiling_reports: {str(e)}")
+            raise
 
     def get_distinct_values(self, columns: Optional[List[str]] = None) -> Dict[str, Dict[str, Any]]:
         """
