@@ -441,27 +441,53 @@ class ComparisonEngine:
         try:
             source, target = self._prepare_dataframes()
             
-            # Initialize comparison results
-            results = {
-                'match_status': False,
-                'rows_match': False,
-                'columns_match': False,
-                'datacompy_report': '',
-                'source_unmatched_rows': pd.DataFrame(),
-                'target_unmatched_rows': pd.DataFrame(),
-                'column_summary': self._generate_column_summary(source, target),
-                'row_counts': {
-                    'source_name': 'Source',
-                    'target_name': 'Target',
-                    'source_count': len(source),
-                    'target_count': len(target)
-                },
-                'distinct_values': {}  # Initialize distinct_values in results
-            }
-
-            # Basic comparison checks
-            results['columns_match'] = set(source.columns) == set(target.columns)
-            results['rows_match'] = len(source) == len(target)
+            # Initialize comparison results with optimized data handling
+            try:
+                # Use efficient row counting
+                source_count = source.shape[0]  # Faster than len()
+                target_count = target.shape[0]
+                
+                # Initialize results with proper structure
+                results = {
+                    'match_status': False,
+                    'rows_match': False,
+                    'columns_match': False,
+                    'datacompy_report': '',
+                    'source_unmatched_rows': pd.DataFrame(),
+                    'target_unmatched_rows': pd.DataFrame(),
+                    'column_summary': {},  # Will be populated later
+                    'row_counts': {
+                        'source_name': 'Source',
+                        'target_name': 'Target',
+                        'source_count': source_count,
+                        'target_count': target_count
+                    },
+                    'distinct_values': {}
+                }
+                
+                # Generate column summary in chunks if needed
+                if source_count > 100000 or target_count > 100000:
+                    results['column_summary'] = self._generate_column_summary_chunked(source, target)
+                else:
+                    results['column_summary'] = self._generate_column_summary(source, target)
+                
+                # Optimized comparison checks
+                results['columns_match'] = set(source.columns) == set(target.columns)
+                results['rows_match'] = source_count == target_count
+                
+            except Exception as e:
+                logger.error(f"Error initializing results: {str(e)}")
+                return {
+                    'match_status': False,
+                    'error': str(e),
+                    'datacompy_report': f"Error initializing comparison: {str(e)}",
+                    'row_counts': {
+                        'source_name': 'Source',
+                        'target_name': 'Target',
+                        'source_count': 0,
+                        'target_count': 0
+                    }
+                }
 
             # Get distinct values for non-numeric columns
             try:
@@ -575,24 +601,120 @@ class ComparisonEngine:
             if col in self.join_columns:
                 continue
                 
-            summary[col] = {
-                'source_null_count': source[col].isnull().sum(),
-                'target_null_count': target[col].isnull().sum(),
-                'source_unique_count': source[col].nunique(),
-                'target_unique_count': target[col].nunique(),
-            }
-            
-            # For numeric columns, add statistical comparisons
-            if np.issubdtype(source[col].dtype, np.number):
-                summary[col].update({
-                    'source_sum': source[col].sum(),
-                    'target_sum': target[col].sum(),
-                    'source_mean': source[col].mean(),
-                    'target_mean': target[col].mean(),
-                    'source_std': source[col].std(),
-                    'target_std': target[col].std(),
-                })
+            try:
+                summary[col] = {
+                    'source_null_count': int(source[col].isnull().sum()),
+                    'target_null_count': int(target[col].isnull().sum()),
+                    'source_unique_count': int(source[col].nunique()),
+                    'target_unique_count': int(target[col].nunique()),
+                }
+                
+                # For numeric columns, add statistical comparisons
+                if np.issubdtype(source[col].dtype, np.number):
+                    summary[col].update({
+                        'source_sum': float(source[col].sum()),
+                        'target_sum': float(target[col].sum()),
+                        'source_mean': float(source[col].mean()),
+                        'target_mean': float(target[col].mean()),
+                        'source_std': float(source[col].std()),
+                        'target_std': float(target[col].std()),
+                    })
+            except Exception as e:
+                logger.warning(f"Error processing column {col}: {str(e)}")
+                summary[col] = {
+                    'source_null_count': 0,
+                    'target_null_count': 0,
+                    'source_unique_count': 0,
+                    'target_unique_count': 0
+                }
 
+        return summary
+
+    def _generate_column_summary_chunked(self, source: pd.DataFrame, 
+                                       target: pd.DataFrame, 
+                                       chunk_size: int = 50000) -> Dict[str, Dict[str, Any]]:
+        """
+        Generate detailed column-level comparison summary using chunked processing.
+        
+        Args:
+            source: Prepared source DataFrame
+            target: Prepared target DataFrame
+            chunk_size: Size of chunks for processing
+            
+        Returns:
+            Dictionary containing column-level statistics
+        """
+        summary = {}
+        
+        for col in source.columns:
+            if col in self.join_columns:
+                continue
+            
+            try:
+                # Initialize summary for this column
+                col_summary = {
+                    'source_null_count': 0,
+                    'target_null_count': 0,
+                    'source_unique_count': 0,
+                    'target_unique_count': 0
+                }
+                
+                # Process source data in chunks
+                unique_values_source = set()
+                source_sum = 0
+                source_values = []
+                
+                for i in range(0, len(source), chunk_size):
+                    chunk = source.iloc[i:i + chunk_size]
+                    col_summary['source_null_count'] += int(chunk[col].isnull().sum())
+                    unique_values_source.update(chunk[col].dropna().unique())
+                    
+                    if np.issubdtype(chunk[col].dtype, np.number):
+                        source_sum += float(chunk[col].sum())
+                        source_values.extend(chunk[col].dropna().values)
+                
+                # Process target data in chunks
+                unique_values_target = set()
+                target_sum = 0
+                target_values = []
+                
+                for i in range(0, len(target), chunk_size):
+                    chunk = target.iloc[i:i + chunk_size]
+                    col_summary['target_null_count'] += int(chunk[col].isnull().sum())
+                    unique_values_target.update(chunk[col].dropna().unique())
+                    
+                    if np.issubdtype(chunk[col].dtype, np.number):
+                        target_sum += float(chunk[col].sum())
+                        target_values.extend(chunk[col].dropna().values)
+                
+                col_summary['source_unique_count'] = len(unique_values_source)
+                col_summary['target_unique_count'] = len(unique_values_target)
+                
+                # For numeric columns, calculate statistics
+                if np.issubdtype(source[col].dtype, np.number):
+                    source_values = np.array(source_values)
+                    target_values = np.array(target_values)
+                    
+                    col_summary.update({
+                        'source_sum': float(source_sum),
+                        'target_sum': float(target_sum),
+                        'source_mean': float(np.mean(source_values)) if len(source_values) > 0 else 0,
+                        'target_mean': float(np.mean(target_values)) if len(target_values) > 0 else 0,
+                        'source_std': float(np.std(source_values)) if len(source_values) > 0 else 0,
+                        'target_std': float(np.std(target_values)) if len(target_values) > 0 else 0
+                    })
+                
+                summary[col] = col_summary
+                
+            except Exception as e:
+                logger.warning(f"Error processing column {col}: {str(e)}")
+                summary[col] = {
+                    'source_null_count': 0,
+                    'target_null_count': 0,
+                    'source_unique_count': 0,
+                    'target_unique_count': 0
+                }
+        
         return summary
 
     def generate_profiling_reports(self, output_dir: str) -> Dict[str, str]:
