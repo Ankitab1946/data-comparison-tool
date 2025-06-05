@@ -661,48 +661,68 @@ class ComparisonEngine:
                 
                 # Process source data in chunks
                 unique_values_source = set()
-                source_sum = 0
+                source_sum = 0.0
                 source_values = []
                 
                 for i in range(0, len(source), chunk_size):
                     chunk = source.iloc[i:i + chunk_size]
                     col_summary['source_null_count'] += int(chunk[col].isnull().sum())
-                    unique_values_source.update(chunk[col].dropna().unique())
                     
+                    # Handle unique values based on dtype
                     if np.issubdtype(chunk[col].dtype, np.number):
-                        source_sum += float(chunk[col].sum())
-                        source_values.extend(chunk[col].dropna().values)
+                        non_null = chunk[col].dropna()
+                        unique_values_source.update(non_null.astype('float64').tolist())
+                        source_sum += float(non_null.sum())
+                        source_values.extend(non_null.astype('float64').tolist())
+                    else:
+                        unique_values_source.update(chunk[col].dropna().astype(str).tolist())
                 
                 # Process target data in chunks
                 unique_values_target = set()
-                target_sum = 0
+                target_sum = 0.0
                 target_values = []
                 
                 for i in range(0, len(target), chunk_size):
                     chunk = target.iloc[i:i + chunk_size]
                     col_summary['target_null_count'] += int(chunk[col].isnull().sum())
-                    unique_values_target.update(chunk[col].dropna().unique())
                     
+                    # Handle unique values based on dtype
                     if np.issubdtype(chunk[col].dtype, np.number):
-                        target_sum += float(chunk[col].sum())
-                        target_values.extend(chunk[col].dropna().values)
+                        non_null = chunk[col].dropna()
+                        unique_values_target.update(non_null.astype('float64').tolist())
+                        target_sum += float(non_null.sum())
+                        target_values.extend(non_null.astype('float64').tolist())
+                    else:
+                        unique_values_target.update(chunk[col].dropna().astype(str).tolist())
                 
                 col_summary['source_unique_count'] = len(unique_values_source)
                 col_summary['target_unique_count'] = len(unique_values_target)
                 
                 # For numeric columns, calculate statistics
                 if np.issubdtype(source[col].dtype, np.number):
-                    source_values = np.array(source_values)
-                    target_values = np.array(target_values)
-                    
-                    col_summary.update({
-                        'source_sum': float(source_sum),
-                        'target_sum': float(target_sum),
-                        'source_mean': float(np.mean(source_values)) if len(source_values) > 0 else 0,
-                        'target_mean': float(np.mean(target_values)) if len(target_values) > 0 else 0,
-                        'source_std': float(np.std(source_values)) if len(source_values) > 0 else 0,
-                        'target_std': float(np.std(target_values)) if len(target_values) > 0 else 0
-                    })
+                    try:
+                        # Convert to numpy arrays with explicit dtype
+                        source_values = np.array(source_values, dtype=np.float64)
+                        target_values = np.array(target_values, dtype=np.float64)
+                        
+                        col_summary.update({
+                            'source_sum': float(source_sum),
+                            'target_sum': float(target_sum),
+                            'source_mean': float(np.mean(source_values)) if len(source_values) > 0 else 0.0,
+                            'target_mean': float(np.mean(target_values)) if len(target_values) > 0 else 0.0,
+                            'source_std': float(np.std(source_values)) if len(source_values) > 0 else 0.0,
+                            'target_std': float(np.std(target_values)) if len(target_values) > 0 else 0.0
+                        })
+                    except Exception as e:
+                        logger.warning(f"Error calculating statistics for column {col}: {str(e)}")
+                        col_summary.update({
+                            'source_sum': 0.0,
+                            'target_sum': 0.0,
+                            'source_mean': 0.0,
+                            'target_mean': 0.0,
+                            'source_std': 0.0,
+                            'target_std': 0.0
+                        })
                 
                 summary[col] = col_summary
                 
