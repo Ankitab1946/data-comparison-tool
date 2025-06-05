@@ -664,16 +664,25 @@ class ComparisonEngine:
                 source_sum = 0.0
                 source_values = []
                 
+                # Determine if column is integer type
+                is_integer = np.issubdtype(source[col].dtype, np.integer)
+                
                 for i in range(0, len(source), chunk_size):
                     chunk = source.iloc[i:i + chunk_size]
-                    col_summary['source_null_count'] += int(chunk[col].isnull().sum())
+                    col_summary['source_null_count'] += np.int64(chunk[col].isnull().sum())
                     
                     # Handle unique values based on dtype
                     if np.issubdtype(chunk[col].dtype, np.number):
                         non_null = chunk[col].dropna()
-                        unique_values_source.update(non_null.astype('float64').tolist())
-                        source_sum += float(non_null.sum())
-                        source_values.extend(non_null.astype('float64').tolist())
+                        if is_integer:
+                            values = non_null.astype(np.int64)
+                            unique_values_source.update(values.tolist())
+                            source_values.extend(values.tolist())
+                        else:
+                            values = non_null.astype(np.float64)
+                            unique_values_source.update(values.tolist())
+                            source_values.extend(values.tolist())
+                        source_sum += np.float64(non_null.sum())
                     else:
                         unique_values_source.update(chunk[col].dropna().astype(str).tolist())
                 
@@ -682,16 +691,25 @@ class ComparisonEngine:
                 target_sum = 0.0
                 target_values = []
                 
+                # Determine if column is integer type in target
+                is_integer = np.issubdtype(target[col].dtype, np.integer)
+                
                 for i in range(0, len(target), chunk_size):
                     chunk = target.iloc[i:i + chunk_size]
-                    col_summary['target_null_count'] += int(chunk[col].isnull().sum())
+                    col_summary['target_null_count'] += np.int64(chunk[col].isnull().sum())
                     
                     # Handle unique values based on dtype
                     if np.issubdtype(chunk[col].dtype, np.number):
                         non_null = chunk[col].dropna()
-                        unique_values_target.update(non_null.astype('float64').tolist())
-                        target_sum += float(non_null.sum())
-                        target_values.extend(non_null.astype('float64').tolist())
+                        if is_integer:
+                            values = non_null.astype(np.int64)
+                            unique_values_target.update(values.tolist())
+                            target_values.extend(values.tolist())
+                        else:
+                            values = non_null.astype(np.float64)
+                            unique_values_target.update(values.tolist())
+                            target_values.extend(values.tolist())
+                        target_sum += np.float64(non_null.sum())
                     else:
                         unique_values_target.update(chunk[col].dropna().astype(str).tolist())
                 
@@ -701,18 +719,30 @@ class ComparisonEngine:
                 # For numeric columns, calculate statistics
                 if np.issubdtype(source[col].dtype, np.number):
                     try:
-                        # Convert to numpy arrays with explicit dtype
-                        source_values = np.array(source_values, dtype=np.float64)
-                        target_values = np.array(target_values, dtype=np.float64)
+                        # Convert to numpy arrays with explicit dtype based on data type
+                        if np.issubdtype(source[col].dtype, np.integer):
+                            source_values = np.array(source_values, dtype=np.int64)
+                            target_values = np.array(target_values, dtype=np.int64)
+                            # Convert to float64 for calculations
+                            source_values = source_values.astype(np.float64)
+                            target_values = target_values.astype(np.float64)
+                        else:
+                            source_values = np.array(source_values, dtype=np.float64)
+                            target_values = np.array(target_values, dtype=np.float64)
                         
-                        col_summary.update({
-                            'source_sum': float(source_sum),
-                            'target_sum': float(target_sum),
-                            'source_mean': float(np.mean(source_values)) if len(source_values) > 0 else 0.0,
-                            'target_mean': float(np.mean(target_values)) if len(target_values) > 0 else 0.0,
-                            'source_std': float(np.std(source_values)) if len(source_values) > 0 else 0.0,
-                            'target_std': float(np.std(target_values)) if len(target_values) > 0 else 0.0
-                        })
+                        # Calculate statistics using numpy's methods
+                        stats = {
+                            'source_sum': np.float64(source_sum),
+                            'target_sum': np.float64(target_sum),
+                            'source_mean': np.float64(np.mean(source_values)) if len(source_values) > 0 else np.float64(0),
+                            'target_mean': np.float64(np.mean(target_values)) if len(target_values) > 0 else np.float64(0),
+                            'source_std': np.float64(np.std(source_values)) if len(source_values) > 0 else np.float64(0),
+                            'target_std': np.float64(np.std(target_values)) if len(target_values) > 0 else np.float64(0)
+                        }
+                        
+                        # Convert numpy types to Python types for JSON serialization
+                        col_summary.update({k: float(v) for k, v in stats.items()})
+                        
                     except Exception as e:
                         logger.warning(f"Error calculating statistics for column {col}: {str(e)}")
                         col_summary.update({
