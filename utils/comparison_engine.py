@@ -298,7 +298,7 @@ class ComparisonEngine:
                 break
 
     def _process_in_chunks(self, source_df: pd.DataFrame, target_df: pd.DataFrame, 
-                          join_columns: List[str], chunk_size: int = 50000) -> Dict[str, pd.DataFrame]:
+                          join_columns: List[str], chunk_size: int = 25000) -> Dict[str, pd.DataFrame]:
         """
         Process large dataframes in chunks to avoid memory issues.
         Optimized for very large datasets (3GB+).
@@ -420,32 +420,59 @@ class ComparisonEngine:
             if not required_cols:
                 raise ValueError("No valid columns found in mapping")
             
-            # Create empty dataframes with optimized dtypes
-            source = pd.DataFrame()
-            target = pd.DataFrame()
+            # Get row counts and indices
+            source_len = len(self.source_df.index)
+            target_len = len(self.target_df.index)
+            logger.info(f"Initial row counts - Source: {source_len}, Target: {target_len}")
             
-            # Process columns in batches to optimize memory
-            batch_size = 5  # Process 5 columns at a time
+            # Create dataframes with preserved indices
+            source = pd.DataFrame(index=pd.RangeIndex(source_len))
+            target = pd.DataFrame(index=pd.RangeIndex(target_len))
+            
+            # Store original indices for verification
+            source._original_index = self.source_df.index.copy()
+            target._original_index = self.target_df.index.copy()
+            
+            # Log index information
+            logger.info(f"Source index type: {type(source.index)}, Target index type: {type(target.index)}")
+            logger.info(f"Source index size: {len(source.index)}, Target index size: {len(target.index)}")
+            
+            # Process columns in smaller batches for better memory management
+            batch_size = 3  # Reduced batch size for large datasets
             column_batches = [list(required_cols.items())[i:i + batch_size] 
                             for i in range(0, len(required_cols), batch_size)]
             
-            for batch in column_batches:
+            # Initialize dataframes with index to maintain row alignment
+            source = pd.DataFrame(index=self.source_df.index)
+            target = pd.DataFrame(index=self.target_df.index)
+            
+            for batch_num, batch in enumerate(column_batches, 1):
                 try:
-                    logger.info(f"Processing column batch: {[col for col, _ in batch]}")
+                    logger.info(f"Processing batch {batch_num}/{len(column_batches)}: {[col for col, _ in batch]}")
                     
-                    # Process each column in the batch
                     for source_col, target_col in batch:
                         try:
                             # Get mapping configuration
                             mapping = next(m for m in self.mapping if m['source'] == source_col)
                             mapped_type = mapping.get('data_type', 'string')
                             
-                            # Read columns with optimized memory usage
-                            source[source_col] = self.source_df[source_col].copy()
-                            target[source_col] = self.target_df[target_col].copy()
+                            # Read and verify column lengths
+                            source_data = self.source_df[source_col].copy()
+                            target_data = self.target_df[target_col].copy()
                             
-                            # Apply type conversions with memory optimization
+                            if len(source_data) != source_len or len(target_data) != target_len:
+                                raise ValueError(f"Column length mismatch for {source_col}")
+                            
+                            # Assign data with index alignment
+                            source[source_col] = source_data
+                            target[source_col] = target_data
+                            
+                            # Apply type conversions
                             self._apply_type_conversion(source, target, source_col, mapped_type)
+                            
+                            # Verify row counts after conversion
+                            if len(source[source_col]) != source_len or len(target[source_col]) != target_len:
+                                raise ValueError(f"Row count changed after processing {source_col}")
                             
                         except Exception as col_error:
                             logger.error(f"Error processing column {source_col}: {str(col_error)}")
@@ -475,6 +502,7 @@ class ComparisonEngine:
         """
         Apply type conversion to a column in both dataframes.
         Optimized for memory usage and large datasets.
+        Ensures row counts are preserved during conversion.
         
         Args:
             source: Source DataFrame
@@ -483,60 +511,78 @@ class ComparisonEngine:
             mapped_type: Target data type
         """
         try:
+            # Store original row counts
+            source_len = len(source)
+            target_len = len(target)
+            
+            # Create temporary Series to avoid modifying original data
+            source_temp = source[col].copy()
+            target_temp = target[col].copy()
+            
             if mapped_type == 'string' or 'char' in str(source[col].dtype).lower():
-                source[col] = source[col].fillna('').astype('string')
-                target[col] = target[col].fillna('').astype('string')
+                source_temp = source_temp.fillna('').astype('string')
+                target_temp = target_temp.fillna('').astype('string')
                 
             elif mapped_type in ['int32', 'int64']:
-                # Always use int64 for integer columns to avoid dtype mismatches
                 try:
-                    # First convert to float to handle NaN values
-                    source[col] = pd.to_numeric(source[col], errors='coerce')
-                    target[col] = pd.to_numeric(target[col], errors='coerce')
+                    # Convert to numeric while preserving NaN
+                    source_temp = pd.to_numeric(source_temp, errors='coerce')
+                    target_temp = pd.to_numeric(target_temp, errors='coerce')
                     
                     # Fill NaN with 0 and convert to int64
-                    source[col] = source[col].fillna(0).astype(np.int64)
-                    target[col] = target[col].fillna(0).astype(np.int64)
+                    source_temp = source_temp.fillna(0).astype(np.int64)
+                    target_temp = target_temp.fillna(0).astype(np.int64)
                 except Exception as e:
                     logger.warning(f"Integer conversion failed for {col}: {str(e)}. Converting to string.")
-                    source[col] = source[col].fillna('').astype('string')
-                    target[col] = target[col].fillna('').astype('string')
+                    source_temp = source_temp.fillna('').astype('string')
+                    target_temp = target_temp.fillna('').astype('string')
                     
             elif mapped_type in ['float32', 'float64']:
-                # Always use float64 for consistent handling
                 try:
-                    source[col] = pd.to_numeric(source[col], errors='coerce')
-                    target[col] = pd.to_numeric(target[col], errors='coerce')
-                    source[col] = source[col].fillna(0).astype(np.float64)
-                    target[col] = target[col].fillna(0).astype(np.float64)
+                    source_temp = pd.to_numeric(source_temp, errors='coerce')
+                    target_temp = pd.to_numeric(target_temp, errors='coerce')
+                    source_temp = source_temp.fillna(0).astype(np.float64)
+                    target_temp = target_temp.fillna(0).astype(np.float64)
                 except Exception as e:
                     logger.warning(f"Float conversion failed for {col}: {str(e)}. Converting to string.")
-                    source[col] = source[col].fillna('').astype('string')
-                    target[col] = target[col].fillna('').astype('string')
+                    source_temp = source_temp.fillna('').astype('string')
+                    target_temp = target_temp.fillna('').astype('string')
                     
             elif mapped_type == 'datetime64[ns]':
-                source[col] = pd.to_datetime(source[col], errors='coerce')
-                target[col] = pd.to_datetime(target[col], errors='coerce')
+                source_temp = pd.to_datetime(source_temp, errors='coerce')
+                target_temp = pd.to_datetime(target_temp, errors='coerce')
                 
             elif mapped_type == 'bool':
                 try:
                     # Convert to boolean safely
-                    source[col] = source[col].map({'True': True, 'False': False, True: True, False: False, 
-                                                 1: True, 0: False}).fillna(False)
-                    target[col] = target[col].map({'True': True, 'False': False, True: True, False: False, 
-                                                 1: True, 0: False}).fillna(False)
+                    source_temp = source_temp.map({'True': True, 'False': False, True: True, False: False, 
+                                               1: True, 0: False}).fillna(False)
+                    target_temp = target_temp.map({'True': True, 'False': False, True: True, False: False, 
+                                               1: True, 0: False}).fillna(False)
                     
                     # Ensure numpy boolean type
-                    source[col] = source[col].astype(np.bool_)
-                    target[col] = target[col].astype(np.bool_)
+                    source_temp = source_temp.astype(np.bool_)
+                    target_temp = target_temp.astype(np.bool_)
                 except Exception as e:
                     logger.warning(f"Boolean conversion failed for {col}: {str(e)}. Converting to string.")
-                    source[col] = source[col].fillna('').astype('string')
-                    target[col] = target[col].fillna('').astype('string')
+                    source_temp = source_temp.fillna('').astype('string')
+                    target_temp = target_temp.fillna('').astype('string')
             else:
                 # Default to string for unknown types
-                source[col] = source[col].fillna('').astype('string')
-                target[col] = target[col].fillna('').astype('string')
+                source_temp = source_temp.fillna('').astype('string')
+                target_temp = target_temp.fillna('').astype('string')
+            
+            # Verify row counts are preserved
+            if len(source_temp) != source_len or len(target_temp) != target_len:
+                raise ValueError(f"Row count changed during conversion of {col}")
+            
+            # Only update the original dataframes if conversion was successful
+            source[col] = source_temp
+            target[col] = target_temp
+            
+            # Verify final row counts
+            if len(source[col]) != source_len or len(target[col]) != target_len:
+                raise ValueError(f"Final row count mismatch for {col}")
                 
         except Exception as e:
             logger.error(f"Error in type conversion for column {col}: {str(e)}")
@@ -545,6 +591,7 @@ class ComparisonEngine:
                 source.drop(columns=[col], inplace=True)
             if col in target.columns:
                 target.drop(columns=[col], inplace=True)
+            raise  # Re-raise the exception to handle it in the calling method
             
             try:
                 # Get single columns from original dataframes
@@ -665,73 +712,95 @@ class ComparisonEngine:
             
             # Initialize comparison results with optimized data handling
             try:
-                # Initialize with memory-efficient methods
+                # Initialize comparison with robust row counting
                 logger.info("Initializing comparison...")
                 
-                # Get row counts using index length
-                source_len = len(source.index)
-                target_len = len(target.index)
-                
-                # Initialize results with proper structure and type conversion
-                results = {
-                    'match_status': False,
-                    'rows_match': False,
-                    'columns_match': False,
-                    'datacompy_report': '',
-                    'source_unmatched_rows': pd.DataFrame(),
-                    'target_unmatched_rows': pd.DataFrame(),
-                    'column_summary': {},  # Will be populated later
-                    'row_counts': {
-                        'source_name': 'Source',
-                        'target_name': 'Target',
-                        'source_count': int(np.int64(source_len)),
-                        'target_count': int(np.int64(target_len))
-                    },
-                    'distinct_values': {}
-                }
-                
-                # Free memory
-                import gc
-                gc.collect()
-                
-                # Always use chunked processing for large datasets
-                logger.info("Generating column summary...")
-                results['column_summary'] = self._generate_column_summary_chunked(source, target, chunk_size=50000)
-                
-                # Free memory
-                import gc
-                gc.collect()
-                
-                # Get row counts using memory-efficient methods
-                source_len = len(source.index)
-                target_len = len(target.index)
-                
-                # Store row counts with proper type conversion
-                results['row_counts'] = {
-                    'source_name': 'Source',
-                    'target_name': 'Target',
-                    'source_count': int(np.int64(source_len)),
-                    'target_count': int(np.int64(target_len))
-                }
-                
-                # Compare columns and rows
-                results['columns_match'] = set(source.columns) == set(target.columns)
-                results['rows_match'] = source_len == target_len
-                
-                logger.info(f"Source rows: {source_len}, Target rows: {target_len}")
-                logger.info(f"Rows match: {results['rows_match']}")
-                logger.info(f"Columns match: {results['columns_match']}")
-                
-                # Optimized comparison checks for large datasets
                 try:
-                    # Check columns first
-                    results['columns_match'] = set(source.columns) == set(target.columns)
+                    # Get row counts using multiple methods for verification
+                    source_len_index = len(source.index)
+                    target_len_index = len(target.index)
+                    source_len_shape = source.shape[0]
+                    target_len_shape = target.shape[0]
                     
-                    # Get row counts using len() on index for better memory efficiency
-                    source_len = len(source.index)
-                    target_len = len(target.index)
+                    # Verify counts match between methods
+                    if source_len_index != source_len_shape or target_len_index != target_len_shape:
+                        logger.warning("Row count mismatch between index and shape methods")
+                        # Use the larger count to be safe
+                        source_len = max(source_len_index, source_len_shape)
+                        target_len = max(target_len_index, target_len_shape)
+                    else:
+                        source_len = source_len_index
+                        target_len = target_len_index
                     
-                    # Store row counts
+                    logger.info(f"Source row count methods - index: {source_len_index}, shape: {source_len_shape}")
+                    logger.info(f"Target row count methods - index: {target_len_index}, shape: {target_len_shape}")
+                    
+                    # Initialize results with verified counts
+                    results = {
+                        'match_status': False,
+                        'rows_match': False,
+                        'columns_match': False,
+                        'datacompy_report': '',
+                        'source_unmatched_rows': pd.DataFrame(),
+                        'target_unmatched_rows': pd.DataFrame(),
+                        'column_summary': {},  # Will be populated later
+                        'row_counts': {
+                            'source_name': 'Source',
+                            'target_name': 'Target',
+                            'source_count': int(np.int64(source_len)),
+                            'target_count': int(np.int64(target_len))
+                        },
+                        'distinct_values': {}
+                    }
+                    
+                    # Verify row alignment and counts
+                    source_aligned = source.index.equals(source._original_index)
+                    target_aligned = target.index.equals(target._original_index)
+                    
+                    if not source_aligned or not target_aligned:
+                        logger.error("Index alignment check failed")
+                        if not source_aligned:
+                            logger.error("Source index mismatch")
+                        if not target_aligned:
+                            logger.error("Target index mismatch")
+                        results['rows_match'] = False
+                    else:
+                        # Compare row counts only if indices are aligned
+                        results['rows_match'] = (source_len == target_len)
+                        logger.info(f"Row counts - Source: {source_len}, Target: {target_len}, Match: {results['rows_match']}")
+                        logger.info("Index alignment verified")
+                    
+                except Exception as e:
+                    logger.error(f"Error in row counting: {str(e)}")
+                    raise ValueError(f"Failed to verify row counts: {str(e)}")
+                
+                # Free memory
+                import gc
+                gc.collect()
+                
+                try:
+                    # Reset index to ensure consistent row alignment
+                    source = source.reset_index(drop=True)
+                    target = target.reset_index(drop=True)
+                    
+                    logger.info("Starting comparison with reset indices...")
+                    
+                    # Generate column summary with smaller chunks
+                    results['column_summary'] = self._generate_column_summary_chunked(source, target, chunk_size=25000)
+                    
+                    # Free memory after column summary
+                    gc.collect()
+                    
+                    # Get and verify row counts
+                    source_len = len(source)
+                    target_len = len(target)
+                    source_shape = source.shape[0]
+                    target_shape = target.shape[0]
+                    
+                    if source_len != source_shape or target_len != target_shape:
+                        raise ValueError(f"Row count mismatch - Source: len={source_len}, shape={source_shape}; Target: len={target_len}, shape={target_shape}")
+                    
+                    # Store verified row counts
                     results['row_counts'] = {
                         'source_name': 'Source',
                         'target_name': 'Target',
@@ -739,13 +808,65 @@ class ComparisonEngine:
                         'target_count': int(np.int64(target_len))
                     }
                     
-                    # Compare row counts
-                    results['rows_match'] = source_len == target_len
+                    logger.info(f"Row counts verified - Source: {source_len}, Target: {target_len}")
                     
-                    # Log the comparison details
-                    logger.info(f"Source rows: {source_len}, Target rows: {target_len}")
-                    logger.info(f"Rows match: {results['rows_match']}")
-                    logger.info(f"Columns match: {results['columns_match']}")
+                    # Set match status based on verified counts
+                    results['rows_match'] = (source_len == target_len)
+                    results['columns_match'] = set(source.columns) == set(target.columns)
+                    
+                    # Log comparison status
+                    logger.info(f"Comparison status - Rows match: {results['rows_match']}, Columns match: {results['columns_match']}")
+                    
+                except Exception as e:
+                    logger.error(f"Error in comparison initialization: {str(e)}")
+                    raise ValueError(f"Comparison initialization failed: {str(e)}")
+                
+                # Process unmatched rows with index verification
+                if join_columns:
+                    try:
+                        logger.info("Processing unmatched rows...")
+                        
+                        # Verify indices are still aligned
+                        if not source.index.equals(pd.RangeIndex(len(source))) or not target.index.equals(pd.RangeIndex(len(target))):
+                            logger.warning("Index alignment lost, resetting indices...")
+                            source = source.reset_index(drop=True)
+                            target = target.reset_index(drop=True)
+                        
+                        # Process chunks with verified indices
+                        unmatched = self._process_in_chunks(source, target, join_columns, chunk_size=25000)
+                        
+                        if isinstance(unmatched, dict):
+                            results['source_unmatched_rows'] = unmatched.get('source_unmatched', pd.DataFrame())
+                            results['target_unmatched_rows'] = unmatched.get('target_unmatched', pd.DataFrame())
+                            
+                            # Log unmatched counts
+                            logger.info(f"Found {len(results['source_unmatched_rows'])} unmatched source rows")
+                            logger.info(f"Found {len(results['target_unmatched_rows'])} unmatched target rows")
+                            
+                            # Verify unmatched results have proper indices
+                            if not results['source_unmatched_rows'].empty and not results['source_unmatched_rows'].index.is_monotonic_increasing:
+                                results['source_unmatched_rows'] = results['source_unmatched_rows'].sort_index()
+                            if not results['target_unmatched_rows'].empty and not results['target_unmatched_rows'].index.is_monotonic_increasing:
+                                results['target_unmatched_rows'] = results['target_unmatched_rows'].sort_index()
+                        else:
+                            logger.error("Invalid unmatched results structure")
+                            results['source_unmatched_rows'] = pd.DataFrame()
+                            results['target_unmatched_rows'] = pd.DataFrame()
+                            
+                    except Exception as e:
+                        logger.error(f"Error processing unmatched rows: {str(e)}")
+                        results['source_unmatched_rows'] = pd.DataFrame()
+                        results['target_unmatched_rows'] = pd.DataFrame()
+                    
+                    # Final verification of results
+                    logger.info("Verifying final comparison results...")
+                    results['match_status'] = (
+                        results['rows_match'] and 
+                        results['columns_match'] and 
+                        len(results['source_unmatched_rows']) == 0 and 
+                        len(results['target_unmatched_rows']) == 0
+                    )
+                    logger.info(f"Final comparison status: {results['match_status']}")
                     
                 except Exception as e:
                     logger.error(f"Error in row comparison: {str(e)}")
