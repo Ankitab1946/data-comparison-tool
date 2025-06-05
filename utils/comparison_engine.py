@@ -577,6 +577,70 @@ class ComparisonEngine:
         self.mapping = mapping
         self.join_columns = join_columns
         self.excluded_columns = [m['source'] for m in mapping if m['exclude']]
+        
+        # Store original data types
+        self.source_types = {m['source']: m.get('source_type', '') for m in mapping}
+        self.target_types = {m['source']: m.get('target_type', '') for m in mapping}
+
+    def update_column_types(self, column: str, source_type: str = None, target_type: str = None):
+        """
+        Update the data types for a column.
+        
+        Args:
+            column: Column name
+            source_type: New source data type
+            target_type: New target data type
+        """
+        if not self.mapping:
+            raise ValueError("Mapping must be set before updating types")
+            
+        for m in self.mapping:
+            if m['source'] == column:
+                if source_type:
+                    m['source_type'] = source_type
+                    self.source_types[column] = source_type
+                if target_type:
+                    m['target_type'] = target_type
+                    self.target_types[column] = target_type
+                # Update the mapped type
+                m['data_type'] = self._get_mapped_type(column, source_type or m['source_type'], True)
+                break
+
+    def _process_in_chunks(self, source_df: pd.DataFrame, target_df: pd.DataFrame, 
+                          join_columns: List[str], chunk_size: int = 100000) -> Dict[str, pd.DataFrame]:
+        """
+        Process large dataframes in chunks to avoid memory issues.
+        
+        Args:
+            source_df: Source DataFrame
+            target_df: Target DataFrame
+            join_columns: Columns to join on
+            chunk_size: Size of each chunk
+            
+        Returns:
+            Dictionary containing unmatched rows
+        """
+        source_unmatched = []
+        target_unmatched = []
+        
+        # Process in chunks
+        for i in range(0, len(source_df), chunk_size):
+            source_chunk = source_df.iloc[i:i + chunk_size]
+            
+            # Merge chunk with target
+            merged = pd.merge(source_chunk, target_df, on=join_columns, how='outer', indicator=True)
+            
+            # Collect unmatched rows
+            source_unmatched.append(merged[merged['_merge'] == 'left_only'].drop('_merge', axis=1))
+            target_unmatched.append(merged[merged['_merge'] == 'right_only'].drop('_merge', axis=1))
+            
+            # Clear memory
+            del merged
+            
+        return {
+            'source_unmatched': pd.concat(source_unmatched) if source_unmatched else pd.DataFrame(),
+            'target_unmatched': pd.concat(target_unmatched) if target_unmatched else pd.DataFrame()
+        }
 
     def _prepare_dataframes(self) -> Tuple[pd.DataFrame, pd.DataFrame]:
         """
@@ -661,10 +725,13 @@ class ComparisonEngine:
 
         return source, target
 
-    def compare(self) -> Dict[str, Any]:
+    def compare(self, chunk_size: int = 100000) -> Dict[str, Any]:
         """
         Perform the comparison between source and target data.
         
+        Args:
+            chunk_size: Size of chunks for processing large datasets
+            
         Returns:
             Dictionary containing comparison results
         """
@@ -703,10 +770,10 @@ class ComparisonEngine:
             # Detailed comparison
             if self.join_columns:
                 try:
-                    # Find unmatched rows
-                    merged = pd.merge(source, target, on=self.join_columns, how='outer', indicator=True)
-                    results['source_unmatched_rows'] = merged[merged['_merge'] == 'left_only'].drop('_merge', axis=1)
-                    results['target_unmatched_rows'] = merged[merged['_merge'] == 'right_only'].drop('_merge', axis=1)
+                    # Process large datasets in chunks
+                    unmatched = self._process_in_chunks(source, target, self.join_columns, chunk_size)
+                    results['source_unmatched_rows'] = unmatched['source_unmatched']
+                    results['target_unmatched_rows'] = unmatched['target_unmatched']
                     
                     # Generate detailed comparison report
                     report_lines = []
@@ -854,26 +921,50 @@ class ComparisonEngine:
                         any(t in col_type for t in ['char', 'text'])):
                         df[col] = df[col].fillna('').astype(str)
 
-            # Generate individual profiles with error handling
-            try:
-                source_profile = ProfileReport(source_df, title="Source Data Profile", 
-                                            progress_bar=False, 
-                                            explorative=True)
-            except Exception as e:
-                logger.error(f"Error generating source profile: {str(e)}")
-                source_profile = ProfileReport(source_df.astype(str), 
-                                            title="Source Data Profile",
-                                            progress_bar=False)
+            # Generate individual profiles with memory optimization
+            profile_kwargs = {
+                'progress_bar': False,
+                'explorative': True,
+                'minimal': True,  # Reduce memory usage
+                'pool_size': 1,   # Reduce parallel processing
+                'samples': None   # Disable sample generation
+            }
 
             try:
-                target_profile = ProfileReport(target_df, title="Target Data Profile",
-                                            progress_bar=False,
-                                            explorative=True)
+                source_profile = ProfileReport(
+                    source_df, 
+                    title="Source Data Profile",
+                    **profile_kwargs
+                )
+            except Exception as e:
+                logger.error(f"Error generating source profile: {str(e)}")
+                # Try with more aggressive memory optimization
+                source_profile = ProfileReport(
+                    source_df.astype(str),
+                    title="Source Data Profile",
+                    minimal=True,
+                    pool_size=1,
+                    samples=None,
+                    progress_bar=False
+                )
+
+            try:
+                target_profile = ProfileReport(
+                    target_df,
+                    title="Target Data Profile",
+                    **profile_kwargs
+                )
             except Exception as e:
                 logger.error(f"Error generating target profile: {str(e)}")
-                target_profile = ProfileReport(target_df.astype(str),
-                                            title="Target Data Profile",
-                                            progress_bar=False)
+                # Try with more aggressive memory optimization
+                target_profile = ProfileReport(
+                    target_df.astype(str),
+                    title="Target Data Profile",
+                    minimal=True,
+                    pool_size=1,
+                    samples=None,
+                    progress_bar=False
+                )
 
             # Save reports
             source_path = output_path / "source_profile.html"
