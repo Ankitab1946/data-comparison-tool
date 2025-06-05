@@ -370,39 +370,71 @@ class ComparisonEngine:
                         source[source_col] = source[source_col].fillna('').astype('string')  # Use pandas string type
                         target[source_col] = target[source_col].fillna('').astype('string')
                     elif mapped_type in ['int32', 'int64']:
-                        # Check cardinality before converting
-                        unique_count = min(
-                            source[source_col].nunique(),
-                            target[source_col].nunique()
-                        )
-                        if unique_count > 1000000:  # High cardinality
+                        # Always use int64 for integer columns to avoid dtype mismatches
+                        try:
+                            # First convert to float to handle NaN values
+                            source[source_col] = pd.to_numeric(source[source_col], errors='coerce')
+                            target[source_col] = pd.to_numeric(target[source_col], errors='coerce')
+                            
+                            # Check cardinality
+                            unique_count = min(
+                                source[source_col].nunique(),
+                                target[source_col].nunique()
+                            )
+                            
+                            if unique_count > 1000000:  # High cardinality
+                                source[source_col] = source[source_col].fillna('').astype('string')
+                                target[source_col] = target[source_col].fillna('').astype('string')
+                                logger.warning(f"Converting {source_col} to string due to high cardinality")
+                            else:
+                                # Fill NaN with 0 and convert to int64
+                                source[source_col] = source[source_col].fillna(0).astype(np.int64)
+                                target[source_col] = target[source_col].fillna(0).astype(np.int64)
+                        except Exception as e:
+                            logger.warning(f"Integer conversion failed for {source_col}: {str(e)}. Converting to string.")
                             source[source_col] = source[source_col].fillna('').astype('string')
                             target[source_col] = target[source_col].fillna('').astype('string')
-                            logger.warning(f"Converting {source_col} to string due to high cardinality")
-                        else:
-                            # Use smaller integer types when possible
-                            source[source_col] = pd.to_numeric(source[source_col], errors='coerce', downcast='integer')
-                            target[source_col] = pd.to_numeric(target[source_col], errors='coerce', downcast='integer')
                     elif mapped_type in ['float32', 'float64']:
-                        # Check cardinality before converting
-                        unique_count = min(
-                            source[source_col].nunique(),
-                            target[source_col].nunique()
-                        )
-                        if unique_count > 1000000:  # High cardinality
+                        # Always use float64 for consistent handling
+                        try:
+                            # Convert to float64 to handle NaN values
+                            source[source_col] = pd.to_numeric(source[source_col], errors='coerce')
+                            target[source_col] = pd.to_numeric(target[source_col], errors='coerce')
+                            
+                            # Check cardinality
+                            unique_count = min(
+                                source[source_col].nunique(),
+                                target[source_col].nunique()
+                            )
+                            
+                            if unique_count > 1000000:  # High cardinality
+                                source[source_col] = source[source_col].fillna('').astype('string')
+                                target[source_col] = target[source_col].fillna('').astype('string')
+                                logger.warning(f"Converting {source_col} to string due to high cardinality")
+                            else:
+                                # Fill NaN with 0 and ensure float64
+                                source[source_col] = source[source_col].fillna(0).astype(np.float64)
+                                target[source_col] = target[source_col].fillna(0).astype(np.float64)
+                        except Exception as e:
+                            logger.warning(f"Float conversion failed for {source_col}: {str(e)}. Converting to string.")
                             source[source_col] = source[source_col].fillna('').astype('string')
                             target[source_col] = target[source_col].fillna('').astype('string')
-                            logger.warning(f"Converting {source_col} to string due to high cardinality")
-                        else:
-                            # Use float32 instead of float64 to save memory
-                            source[source_col] = pd.to_numeric(source[source_col], errors='coerce', downcast='float')
-                            target[source_col] = pd.to_numeric(target[source_col], errors='coerce', downcast='float')
                     elif mapped_type == 'datetime64[ns]':
                         source[source_col] = pd.to_datetime(source[source_col], errors='coerce')
                         target[source_col] = pd.to_datetime(target[source_col], errors='coerce')
                     elif mapped_type == 'bool':
-                        source[source_col] = source[source_col].fillna(False).astype('boolean')  # Use pandas boolean type
-                        target[source_col] = target[source_col].fillna(False).astype('boolean')
+                        try:
+                            # Convert to boolean safely
+                            source[source_col] = source[source_col].map({'True': True, 'False': False, True: True, False: False, 1: True, 0: False}).fillna(False)
+                            target[source_col] = target[source_col].map({'True': True, 'False': False, True: True, False: False, 1: True, 0: False}).fillna(False)
+                            
+                            # Ensure numpy boolean type
+                            source[source_col] = source[source_col].astype(np.bool_)
+                            target[source_col] = target[source_col].astype(np.bool_)
+                        except Exception as e:
+                            logger.warning(f"Boolean conversion failed for {source_col}: {str(e)}. Converting to string.")
+                            source[source_col] = source[source_col].fillna('').astype('string')
+                            target[source_col] = target[source_col].fillna('').astype('string')
                     else:
                         # Default to string for unknown types
                         source[source_col] = source[source_col].fillna('').astype('string')
