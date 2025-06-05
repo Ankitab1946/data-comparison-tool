@@ -378,25 +378,47 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class ComparisonEngine:
-    # Type mapping dictionary for data type conversion
-    TYPE_MAPPING = {
-        'int': 'int32',
-        'int64': 'int64',
-        'numeric': 'int64',
-        'bigint': 'int64',
-        'smallint': 'int64',
+    # SQL Server to pandas type mapping
+    SQL_TYPE_MAPPING = {
         'varchar': 'string',
         'nvarchar': 'string',
         'char': 'string',
         'nchar': 'string',
         'text': 'string',
-        'date': 'datetime64[ns]',
-        'datetime': 'datetime64[ns]',
+        'ntext': 'string',
+        'int': 'int32',
+        'bigint': 'int64',
+        'smallint': 'int32',
+        'tinyint': 'int32',
+        'numeric': 'float64',
         'decimal': 'float64',
         'float': 'float64',
+        'real': 'float32',
         'bit': 'bool',
-        'boolean': 'bool',
-        'unsupported': 'string'  # Default handling for unsupported types
+        'date': 'datetime64[ns]',
+        'datetime': 'datetime64[ns]',
+        'datetime2': 'datetime64[ns]',
+        'datetimeoffset': 'datetime64[ns]',
+        'time': 'datetime64[ns]',
+        'binary': 'string',
+        'varbinary': 'string',
+        'uniqueidentifier': 'string',
+        'xml': 'string',
+        'unsupported': 'string'
+    }
+
+    # Pandas type mapping
+    PANDAS_TYPE_MAPPING = {
+        'object': 'string',
+        'string': 'string',
+        'int64': 'int64',
+        'int32': 'int32',
+        'float64': 'float64',
+        'float32': 'float32',
+        'bool': 'bool',
+        'datetime64[ns]': 'datetime64[ns]',
+        'category': 'string',
+        'unsupported': 'string'
     }
 
     def __init__(self, source_df: pd.DataFrame, target_df: pd.DataFrame):
@@ -424,13 +446,14 @@ class ComparisonEngine:
         """
         self.type_overrides[column] = dtype
 
-    def _get_mapped_type(self, column: str, current_type: str) -> str:
+    def _get_mapped_type(self, column: str, current_type: str, is_sql_type: bool = False) -> str:
         """
         Get the mapped data type for a column.
         
         Args:
             column: Column name
             current_type: Current data type
+            is_sql_type: Whether the type is from SQL Server
             
         Returns:
             Mapped data type string
@@ -438,16 +461,44 @@ class ComparisonEngine:
         # Check for user override first
         if column in self.type_overrides:
             return self.type_overrides[column]
-            
-        # Convert current type to lowercase for matching
-        current_type = str(current_type).lower().split('[')[0]  # Handle cases like 'datetime64[ns]'
         
-        # Check if type exists in mapping
-        for key, value in self.TYPE_MAPPING.items():
-            if key in current_type:
-                return value
-                
+        # Special handling for ColumnNameID
+        if column == 'ColumnNameID':
+            return 'string'
+            
+        # Convert current type to lowercase and clean it
+        current_type = str(current_type).lower().strip()
+        # Remove length specifications like varchar(50)
+        current_type = current_type.split('(')[0]
+        
+        # Handle SQL Server types
+        if is_sql_type:
+            # Try exact match first
+            if current_type in self.SQL_TYPE_MAPPING:
+                return self.SQL_TYPE_MAPPING[current_type]
+            # Try partial match
+            for sql_type, pandas_type in self.SQL_TYPE_MAPPING.items():
+                if sql_type in current_type:
+                    return pandas_type
+        
+        # Handle Pandas types
+        else:
+            # Remove [ns] from datetime types
+            base_type = current_type.split('[')[0]
+            # Try exact match first
+            if base_type in self.PANDAS_TYPE_MAPPING:
+                return self.PANDAS_TYPE_MAPPING[base_type]
+            # Try partial match
+            for pandas_type, mapped_type in self.PANDAS_TYPE_MAPPING.items():
+                if pandas_type in base_type:
+                    return mapped_type
+        
+        # If type contains 'char' or 'text', treat as string
+        if 'char' in current_type or 'text' in current_type:
+            return 'string'
+            
         # Default to string for unknown types
+        logger.warning(f"Unknown type '{current_type}' for column '{column}', defaulting to string")
         return 'string'
 
     def auto_map_columns(self) -> List[Dict[str, Any]]:
@@ -476,30 +527,32 @@ class ComparisonEngine:
                 t_col = next((col for col in target_cols 
                             if ''.join(e.lower() for e in col if e.isalnum()) == s_clean), None)
 
-            # Get source column type
+            # Get source and target types
             source_type = str(self.source_df[s_col].dtype)
-            
-            # Get target column type if there's a match
             target_type = str(self.target_df[t_col].dtype) if t_col else 'unknown'
             
-            # Determine the best data type to use
-            if t_col:
-                # If types match exactly, use that type
-                if source_type == target_type:
-                    mapped_type = source_type
-                else:
-                    # Try to find compatible type from TYPE_MAPPING
-                    source_mapped = self._get_mapped_type(s_col, source_type)
-                    target_mapped = self._get_mapped_type(t_col, target_type)
-                    
-                    if source_mapped == target_mapped:
-                        mapped_type = source_mapped
-                    else:
-                        # If types are incompatible, default to string
-                        mapped_type = 'string'
+            # Check if either type is from SQL Server (contains SQL types like varchar, nvarchar, etc.)
+            is_sql_source = any(sql_type in source_type.lower() for sql_type in self.SQL_TYPE_MAPPING.keys())
+            is_sql_target = any(sql_type in target_type.lower() for sql_type in self.SQL_TYPE_MAPPING.keys())
+            
+            # Get mapped types
+            source_mapped = self._get_mapped_type(s_col, source_type, is_sql_source)
+            target_mapped = self._get_mapped_type(s_col, target_type, is_sql_target) if t_col else source_mapped
+            
+            # Determine final type
+            if source_mapped == target_mapped:
+                mapped_type = source_mapped
             else:
-                # If no target match, use source type
-                mapped_type = self._get_mapped_type(s_col, source_type)
+                # For mismatched types, prefer string for text-like columns
+                if 'char' in source_type.lower() or 'text' in source_type.lower() or \
+                   'char' in target_type.lower() or 'text' in target_type.lower():
+                    mapped_type = 'string'
+                else:
+                    # For numeric types, use the wider type
+                    if all(t in ['int32', 'int64', 'float32', 'float64'] for t in [source_mapped, target_mapped]):
+                        mapped_type = 'float64'  # widest numeric type
+                    else:
+                        mapped_type = 'string'  # fallback for incompatible types
 
             mapping.append({
                 'source': s_col,
@@ -556,27 +609,49 @@ class ComparisonEngine:
 
             source_col = mapping['source']
             try:
-                # Get the mapped type for this column
-                mapped_type = self._get_mapped_type(source_col, mapping.get('data_type', str(source[source_col].dtype)))
+                # Get source and target types
+                source_type = str(source[source_col].dtype)
+                target_type = str(target[source_col].dtype)
                 
-                # Convert based on mapped type
-                if mapped_type == 'string':
+                # Check if either type is from SQL Server
+                is_sql_source = any(sql_type in source_type.lower() for sql_type in self.SQL_TYPE_MAPPING.keys())
+                is_sql_target = any(sql_type in target_type.lower() for sql_type in self.SQL_TYPE_MAPPING.keys())
+                
+                # Get the mapped type from the mapping configuration
+                mapped_type = mapping.get('data_type', 'string')
+                
+                # Special handling for ColumnNameID and text-like columns
+                if source_col == 'ColumnNameID' or \
+                   any(t in source_type.lower() or t in target_type.lower() 
+                       for t in ['char', 'text', 'string', 'object']):
                     source[source_col] = source[source_col].fillna('').astype(str)
                     target[source_col] = target[source_col].fillna('').astype(str)
-                elif mapped_type in ['int32', 'int64']:
-                    source[source_col] = pd.to_numeric(source[source_col], errors='coerce').astype(mapped_type)
-                    target[source_col] = pd.to_numeric(target[source_col], errors='coerce').astype(mapped_type)
-                elif mapped_type == 'float64':
-                    source[source_col] = pd.to_numeric(source[source_col], errors='coerce').astype(np.float64)
-                    target[source_col] = pd.to_numeric(target[source_col], errors='coerce').astype(np.float64)
-                elif mapped_type == 'datetime64[ns]':
-                    source[source_col] = pd.to_datetime(source[source_col], errors='coerce')
-                    target[source_col] = pd.to_datetime(target[source_col], errors='coerce')
-                elif mapped_type == 'bool':
-                    source[source_col] = source[source_col].fillna(False).astype(bool)
-                    target[source_col] = target[source_col].fillna(False).astype(bool)
-                else:
-                    # Default to string for unknown types
+                    continue
+                
+                # Convert based on mapped type
+                try:
+                    if mapped_type == 'string':
+                        source[source_col] = source[source_col].fillna('').astype(str)
+                        target[source_col] = target[source_col].fillna('').astype(str)
+                    elif mapped_type in ['int32', 'int64']:
+                        source[source_col] = pd.to_numeric(source[source_col], errors='coerce').astype(mapped_type)
+                        target[source_col] = pd.to_numeric(target[source_col], errors='coerce').astype(mapped_type)
+                    elif mapped_type in ['float32', 'float64']:
+                        source[source_col] = pd.to_numeric(source[source_col], errors='coerce').astype(mapped_type)
+                        target[source_col] = pd.to_numeric(target[source_col], errors='coerce').astype(mapped_type)
+                    elif mapped_type == 'datetime64[ns]':
+                        source[source_col] = pd.to_datetime(source[source_col], errors='coerce')
+                        target[source_col] = pd.to_datetime(target[source_col], errors='coerce')
+                    elif mapped_type == 'bool':
+                        source[source_col] = source[source_col].fillna(False).astype(bool)
+                        target[source_col] = target[source_col].fillna(False).astype(bool)
+                    else:
+                        # Default to string for unknown types
+                        logger.warning(f"Unknown type '{mapped_type}' for column '{source_col}', converting to string")
+                        source[source_col] = source[source_col].fillna('').astype(str)
+                        target[source_col] = target[source_col].fillna('').astype(str)
+                except Exception as e:
+                    logger.warning(f"Type conversion failed for column {source_col} to {mapped_type}: {str(e)}. Converting to string.")
                     source[source_col] = source[source_col].fillna('').astype(str)
                     target[source_col] = target[source_col].fillna('').astype(str)
             except Exception as e:
