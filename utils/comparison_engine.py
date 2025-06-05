@@ -1858,10 +1858,9 @@ class ComparisonEngine:
                 break
 
     def _process_in_chunks(self, source_df: pd.DataFrame, target_df: pd.DataFrame, 
-                          join_columns: List[str], chunk_size: int = 50000) -> Dict[str, pd.DataFrame]:
+                          join_columns: List[str], chunk_size: int = 100000) -> Dict[str, pd.DataFrame]:
         """
         Process large dataframes in chunks to avoid memory issues.
-        Optimized for very large datasets (3GB+).
         
         Args:
             source_df: Source DataFrame
@@ -1872,97 +1871,32 @@ class ComparisonEngine:
         Returns:
             Dictionary containing unmatched rows
         """
-        try:
-            logger.info("Starting chunked comparison process...")
-            source_unmatched = []
-            target_unmatched = []
-            processed_target_chunks = set()
+        source_unmatched = []
+        target_unmatched = []
+        
+        # Process in chunks
+        for i in range(0, len(source_df), chunk_size):
+            source_chunk = source_df.iloc[i:i + chunk_size]
             
-            # Calculate total chunks for progress tracking
-            total_source_chunks = (len(source_df) + chunk_size - 1) // chunk_size
-            total_target_chunks = (len(target_df) + chunk_size - 1) // chunk_size
+            # Merge chunk with target
+            merged = pd.merge(source_chunk, target_df, on=join_columns, how='outer', indicator=True)
             
-            # Process source in chunks
-            for source_chunk_num in range(total_source_chunks):
-                try:
-                    logger.info(f"Processing source chunk {source_chunk_num + 1}/{total_source_chunks}")
-                    
-                    # Get chunk of source data
-                    start_idx = source_chunk_num * chunk_size
-                    end_idx = min(start_idx + chunk_size, len(source_df))
-                    source_chunk = source_df.iloc[start_idx:end_idx]
-                    
-                    # Create a hash of join column values for this chunk
-                    source_keys = set(map(tuple, source_chunk[join_columns].values))
-                    
-                    # Process target in chunks
-                    for target_chunk_num in range(total_target_chunks):
-                        if target_chunk_num in processed_target_chunks:
-                            continue
-                            
-                        # Get chunk of target data
-                        start_idx = target_chunk_num * chunk_size
-                        end_idx = min(start_idx + chunk_size, len(target_df))
-                        target_chunk = target_df.iloc[start_idx:end_idx]
-                        
-                        # Create a hash of join column values for target chunk
-                        target_keys = set(map(tuple, target_chunk[join_columns].values))
-                        
-                        # Find unmatched in source
-                        source_unmatched_keys = source_keys - target_keys
-                        if source_unmatched_keys:
-                            mask = source_chunk[join_columns].apply(tuple, axis=1).isin(source_unmatched_keys)
-                            source_unmatched.append(source_chunk[mask])
-                        
-                        # Find unmatched in target
-                        target_unmatched_keys = target_keys - source_keys
-                        if target_unmatched_keys:
-                            mask = target_chunk[join_columns].apply(tuple, axis=1).isin(target_unmatched_keys)
-                            target_unmatched.append(target_chunk[mask])
-                        
-                        processed_target_chunks.add(target_chunk_num)
-                        
-                        # Clear memory
-                        del target_chunk, target_keys
-                        import gc
-                        gc.collect()
-                    
-                    # Clear memory after processing each source chunk
-                    del source_chunk, source_keys
-                    gc.collect()
-                    
-                except Exception as chunk_error:
-                    logger.error(f"Error processing chunks: {str(chunk_error)}")
-                    continue
-            
-            # Combine results efficiently
-            logger.info("Combining results...")
-            result = {
-                'source_unmatched': (pd.concat(source_unmatched, ignore_index=True, copy=False)
-                                   if source_unmatched else pd.DataFrame()),
-                'target_unmatched': (pd.concat(target_unmatched, ignore_index=True, copy=False)
-                                   if target_unmatched else pd.DataFrame())
-            }
+            # Collect unmatched rows
+            source_unmatched.append(merged[merged['_merge'] == 'left_only'].drop('_merge', axis=1))
+            target_unmatched.append(merged[merged['_merge'] == 'right_only'].drop('_merge', axis=1))
             
             # Clear memory
-            del source_unmatched, target_unmatched, processed_target_chunks
-            gc.collect()
+            del merged
             
-            logger.info("Chunk processing completed successfully")
-            return result
-            
-        except Exception as e:
-            logger.error(f"Error in chunk processing: {str(e)}")
-            return {
-                'source_unmatched': pd.DataFrame(),
-                'target_unmatched': pd.DataFrame(),
-                'error': str(e)
-            }
+        return {
+            'source_unmatched': pd.concat(source_unmatched) if source_unmatched else pd.DataFrame(),
+            'target_unmatched': pd.concat(target_unmatched) if target_unmatched else pd.DataFrame()
+        }
 
     def _prepare_dataframes(self) -> Tuple[pd.DataFrame, pd.DataFrame]:
         """
         Prepare dataframes for comparison by applying mappings and type conversions.
-        Memory-optimized version for handling large datasets (3GB+).
+        Memory-optimized version that processes columns individually.
         
         Returns:
             Tuple of (prepared source DataFrame, prepared target DataFrame)
@@ -1970,141 +1904,17 @@ class ComparisonEngine:
         if not self.mapping:
             raise ValueError("Mapping must be set before comparison")
 
-        try:
-            logger.info("Starting dataframe preparation...")
-            
-            # Get required columns only
-            required_cols = {m['source']: m['target'] for m in self.mapping 
-                           if not m['exclude'] and m['target']}
-            
-            if not required_cols:
-                raise ValueError("No valid columns found in mapping")
-            
-            # Create empty dataframes with optimized dtypes
-            source = pd.DataFrame()
-            target = pd.DataFrame()
-            
-            # Process columns in batches to optimize memory
-            batch_size = 5  # Process 5 columns at a time
-            column_batches = [list(required_cols.items())[i:i + batch_size] 
-                            for i in range(0, len(required_cols), batch_size)]
-            
-            for batch in column_batches:
-                try:
-                    logger.info(f"Processing column batch: {[col for col, _ in batch]}")
-                    
-                    # Process each column in the batch
-                    for source_col, target_col in batch:
-                        try:
-                            # Get mapping configuration
-                            mapping = next(m for m in self.mapping if m['source'] == source_col)
-                            mapped_type = mapping.get('data_type', 'string')
-                            
-                            # Read columns with optimized memory usage
-                            source[source_col] = self.source_df[source_col].copy()
-                            target[source_col] = self.target_df[target_col].copy()
-                            
-                            # Apply type conversions with memory optimization
-                            self._apply_type_conversion(source, target, source_col, mapped_type)
-                            
-                        except Exception as col_error:
-                            logger.error(f"Error processing column {source_col}: {str(col_error)}")
-                            # Remove problematic columns
-                            if source_col in source.columns:
-                                source.drop(columns=[source_col], inplace=True)
-                            if source_col in target.columns:
-                                target.drop(columns=[source_col], inplace=True)
-                    
-                    # Force garbage collection after each batch
-                    import gc
-                    gc.collect()
-                    
-                except Exception as batch_error:
-                    logger.error(f"Error processing batch: {str(batch_error)}")
-                    continue
-            
-            logger.info("Dataframe preparation completed successfully")
-            return source, target
-            
-        except Exception as e:
-            logger.error(f"Error in prepare_dataframes: {str(e)}")
-            raise
+        # Create empty dataframes with only required columns
+        source = pd.DataFrame()
+        target = pd.DataFrame()
 
-    def _apply_type_conversion(self, source: pd.DataFrame, target: pd.DataFrame, 
-                             col: str, mapped_type: str) -> None:
-        """
-        Apply type conversion to a column in both dataframes.
-        Optimized for memory usage and large datasets.
-        
-        Args:
-            source: Source DataFrame
-            target: Target DataFrame
-            col: Column name
-            mapped_type: Target data type
-        """
-        try:
-            if mapped_type == 'string' or 'char' in str(source[col].dtype).lower():
-                source[col] = source[col].fillna('').astype('string')
-                target[col] = target[col].fillna('').astype('string')
-                
-            elif mapped_type in ['int32', 'int64']:
-                # Always use int64 for integer columns to avoid dtype mismatches
-                try:
-                    # First convert to float to handle NaN values
-                    source[col] = pd.to_numeric(source[col], errors='coerce')
-                    target[col] = pd.to_numeric(target[col], errors='coerce')
-                    
-                    # Fill NaN with 0 and convert to int64
-                    source[col] = source[col].fillna(0).astype(np.int64)
-                    target[col] = target[col].fillna(0).astype(np.int64)
-                except Exception as e:
-                    logger.warning(f"Integer conversion failed for {col}: {str(e)}. Converting to string.")
-                    source[col] = source[col].fillna('').astype('string')
-                    target[col] = target[col].fillna('').astype('string')
-                    
-            elif mapped_type in ['float32', 'float64']:
-                # Always use float64 for consistent handling
-                try:
-                    source[col] = pd.to_numeric(source[col], errors='coerce')
-                    target[col] = pd.to_numeric(target[col], errors='coerce')
-                    source[col] = source[col].fillna(0).astype(np.float64)
-                    target[col] = target[col].fillna(0).astype(np.float64)
-                except Exception as e:
-                    logger.warning(f"Float conversion failed for {col}: {str(e)}. Converting to string.")
-                    source[col] = source[col].fillna('').astype('string')
-                    target[col] = target[col].fillna('').astype('string')
-                    
-            elif mapped_type == 'datetime64[ns]':
-                source[col] = pd.to_datetime(source[col], errors='coerce')
-                target[col] = pd.to_datetime(target[col], errors='coerce')
-                
-            elif mapped_type == 'bool':
-                try:
-                    # Convert to boolean safely
-                    source[col] = source[col].map({'True': True, 'False': False, True: True, False: False, 
-                                                 1: True, 0: False}).fillna(False)
-                    target[col] = target[col].map({'True': True, 'False': False, True: True, False: False, 
-                                                 1: True, 0: False}).fillna(False)
-                    
-                    # Ensure numpy boolean type
-                    source[col] = source[col].astype(np.bool_)
-                    target[col] = target[col].astype(np.bool_)
-                except Exception as e:
-                    logger.warning(f"Boolean conversion failed for {col}: {str(e)}. Converting to string.")
-                    source[col] = source[col].fillna('').astype('string')
-                    target[col] = target[col].fillna('').astype('string')
-            else:
-                # Default to string for unknown types
-                source[col] = source[col].fillna('').astype('string')
-                target[col] = target[col].fillna('').astype('string')
-                
-        except Exception as e:
-            logger.error(f"Error in type conversion for column {col}: {str(e)}")
-            # Ensure columns are removed if conversion fails
-            if col in source.columns:
-                source.drop(columns=[col], inplace=True)
-            if col in target.columns:
-                target.drop(columns=[col], inplace=True)
+        # Process one column at a time
+        for mapping in self.mapping:
+            if mapping['exclude'] or not mapping['target']:
+                continue
+
+            source_col = mapping['source']
+            target_col = mapping['target']
             
             try:
                 # Get single columns from original dataframes
@@ -2145,46 +1955,25 @@ class ComparisonEngine:
                             source[source_col] = source[source_col].fillna('').astype('string')
                             target[source_col] = target[source_col].fillna('').astype('string')
                     elif mapped_type in ['float32', 'float64']:
-                        # Always use float64 for consistent handling
-                        try:
-                            # Convert to float64 to handle NaN values
-                            source[source_col] = pd.to_numeric(source[source_col], errors='coerce')
-                            target[source_col] = pd.to_numeric(target[source_col], errors='coerce')
-                            
-                            # Check cardinality
-                            unique_count = min(
-                                source[source_col].nunique(),
-                                target[source_col].nunique()
-                            )
-                            
-                            if unique_count > 1000000:  # High cardinality
-                                source[source_col] = source[source_col].fillna('').astype('string')
-                                target[source_col] = target[source_col].fillna('').astype('string')
-                                logger.warning(f"Converting {source_col} to string due to high cardinality")
-                            else:
-                                # Fill NaN with 0 and ensure float64
-                                source[source_col] = source[source_col].fillna(0).astype(np.float64)
-                                target[source_col] = target[source_col].fillna(0).astype(np.float64)
-                        except Exception as e:
-                            logger.warning(f"Float conversion failed for {source_col}: {str(e)}. Converting to string.")
+                        # Check cardinality before converting
+                        unique_count = min(
+                            source[source_col].nunique(),
+                            target[source_col].nunique()
+                        )
+                        if unique_count > 1000000:  # High cardinality
                             source[source_col] = source[source_col].fillna('').astype('string')
                             target[source_col] = target[source_col].fillna('').astype('string')
+                            logger.warning(f"Converting {source_col} to string due to high cardinality")
+                        else:
+                            # Use float32 instead of float64 to save memory
+                            source[source_col] = pd.to_numeric(source[source_col], errors='coerce', downcast='float')
+                            target[source_col] = pd.to_numeric(target[source_col], errors='coerce', downcast='float')
                     elif mapped_type == 'datetime64[ns]':
                         source[source_col] = pd.to_datetime(source[source_col], errors='coerce')
                         target[source_col] = pd.to_datetime(target[source_col], errors='coerce')
                     elif mapped_type == 'bool':
-                        try:
-                            # Convert to boolean safely
-                            source[source_col] = source[source_col].map({'True': True, 'False': False, True: True, False: False, 1: True, 0: False}).fillna(False)
-                            target[source_col] = target[source_col].map({'True': True, 'False': False, True: True, False: False, 1: True, 0: False}).fillna(False)
-                            
-                            # Ensure numpy boolean type
-                            source[source_col] = source[source_col].astype(np.bool_)
-                            target[source_col] = target[source_col].astype(np.bool_)
-                        except Exception as e:
-                            logger.warning(f"Boolean conversion failed for {source_col}: {str(e)}. Converting to string.")
-                            source[source_col] = source[source_col].fillna('').astype('string')
-                            target[source_col] = target[source_col].fillna('').astype('string')
+                        source[source_col] = source[source_col].fillna(False).astype('boolean')  # Use pandas boolean type
+                        target[source_col] = target[source_col].fillna(False).astype('boolean')
                     else:
                         # Default to string for unknown types
                         source[source_col] = source[source_col].fillna('').astype('string')
@@ -2210,7 +1999,7 @@ class ComparisonEngine:
         # Return the prepared dataframes
         return source, target
 
-    def compare(self, chunk_size: int = 50000) -> Dict[str, Any]:
+    def compare(self, chunk_size: int = 100000) -> Dict[str, Any]:
         """
         Perform the comparison between source and target data.
         
@@ -2225,12 +2014,9 @@ class ComparisonEngine:
             
             # Initialize comparison results with optimized data handling
             try:
-                # Initialize with memory-efficient methods
-                logger.info("Initializing comparison...")
-                
-                # Get row counts using index length
-                source_len = len(source.index)
-                target_len = len(target.index)
+                # Use efficient row counting
+                source_count = source.shape[0]  # Faster than len()
+                target_count = target.shape[0]
                 
                 # Initialize results with proper structure and type conversion
                 results = {
@@ -2244,73 +2030,21 @@ class ComparisonEngine:
                     'row_counts': {
                         'source_name': 'Source',
                         'target_name': 'Target',
-                        'source_count': int(np.int64(source_len)),
-                        'target_count': int(np.int64(target_len))
+                        'source_count': int(np.int64(source_count)),
+                        'target_count': int(np.int64(target_count))
                     },
                     'distinct_values': {}
                 }
                 
-                # Free memory
-                import gc
-                gc.collect()
+                # Generate column summary in chunks if needed
+                if source_count > 100000 or target_count > 100000:
+                    results['column_summary'] = self._generate_column_summary_chunked(source, target)
+                else:
+                    results['column_summary'] = self._generate_column_summary(source, target)
                 
-                # Always use chunked processing for large datasets
-                logger.info("Generating column summary...")
-                results['column_summary'] = self._generate_column_summary_chunked(source, target, chunk_size=50000)
-                
-                # Free memory
-                import gc
-                gc.collect()
-                
-                # Get row counts using memory-efficient methods
-                source_len = len(source.index)
-                target_len = len(target.index)
-                
-                # Store row counts with proper type conversion
-                results['row_counts'] = {
-                    'source_name': 'Source',
-                    'target_name': 'Target',
-                    'source_count': int(np.int64(source_len)),
-                    'target_count': int(np.int64(target_len))
-                }
-                
-                # Compare columns and rows
+                # Optimized comparison checks
                 results['columns_match'] = set(source.columns) == set(target.columns)
-                results['rows_match'] = source_len == target_len
-                
-                logger.info(f"Source rows: {source_len}, Target rows: {target_len}")
-                logger.info(f"Rows match: {results['rows_match']}")
-                logger.info(f"Columns match: {results['columns_match']}")
-                
-                # Optimized comparison checks for large datasets
-                try:
-                    # Check columns first
-                    results['columns_match'] = set(source.columns) == set(target.columns)
-                    
-                    # Get row counts using len() on index for better memory efficiency
-                    source_len = len(source.index)
-                    target_len = len(target.index)
-                    
-                    # Store row counts
-                    results['row_counts'] = {
-                        'source_name': 'Source',
-                        'target_name': 'Target',
-                        'source_count': int(np.int64(source_len)),
-                        'target_count': int(np.int64(target_len))
-                    }
-                    
-                    # Compare row counts
-                    results['rows_match'] = source_len == target_len
-                    
-                    # Log the comparison details
-                    logger.info(f"Source rows: {source_len}, Target rows: {target_len}")
-                    logger.info(f"Rows match: {results['rows_match']}")
-                    logger.info(f"Columns match: {results['columns_match']}")
-                    
-                except Exception as e:
-                    logger.error(f"Error in row comparison: {str(e)}")
-                    results['rows_match'] = False
-                    results['error'] = f"Row comparison failed: {str(e)}"
+                results['rows_match'] = source_count == target_count
                 
             except Exception as e:
                 logger.error(f"Error initializing results: {str(e)}")
@@ -2513,168 +2247,109 @@ class ComparisonEngine:
                         'target_std': np.float64(0)
                     })
                 
-                # Process source data in chunks with memory optimization
+                # Process source data in chunks
                 unique_values_source = set()
-                source_sum = np.float64(0)
+                source_sum = 0.0
                 source_values = []
                 
                 # Determine if column is integer type
                 is_integer = np.issubdtype(source[col].dtype, np.integer)
                 
-                # Calculate total chunks for progress tracking
-                total_chunks = (len(source) + chunk_size - 1) // chunk_size
-                
-                for chunk_num in range(total_chunks):
-                    try:
-                        # Get chunk indices
-                        start_idx = chunk_num * chunk_size
-                        end_idx = min(start_idx + chunk_size, len(source))
-                        
-                        # Process chunk
-                        chunk = source.iloc[start_idx:end_idx]
-                        col_summary['source_null_count'] += np.int64(chunk[col].isnull().sum())
-                        
-                        # Handle numeric values
-                        if np.issubdtype(chunk[col].dtype, np.number):
-                            non_null = chunk[col].dropna()
-                            if len(non_null) > 0:
-                                if is_integer:
-                                    values = non_null.astype(np.int64)
-                                    unique_values_source.update(values.tolist())
-                                    source_values.extend(values.tolist())
-                                else:
-                                    values = non_null.astype(np.float64)
-                                    unique_values_source.update(values.tolist())
-                                    source_values.extend(values.tolist())
-                                source_sum = np.add(source_sum, np.float64(non_null.sum()), casting='safe')
+                for i in range(0, len(source), chunk_size):
+                    chunk = source.iloc[i:i + chunk_size]
+                    col_summary['source_null_count'] += np.int64(chunk[col].isnull().sum())
+                    
+                    # Handle unique values based on dtype
+                    if np.issubdtype(chunk[col].dtype, np.number):
+                        non_null = chunk[col].dropna()
+                        if is_integer:
+                            values = non_null.astype(np.int64)
+                            unique_values_source.update(values.tolist())
+                            source_values.extend(values.tolist())
                         else:
-                            # Handle non-numeric values
-                            non_null = chunk[col].dropna()
-                            if len(non_null) > 0:
-                                unique_values_source.update(non_null.astype(str).tolist())
-                        
-                        # Clear chunk memory
-                        del chunk, non_null
-                        if 'values' in locals():
-                            del values
-                        
-                        # Force garbage collection periodically
-                        if chunk_num % 10 == 0:
-                            gc.collect()
-                            
-                    except Exception as e:
-                        logger.error(f"Error processing source chunk {chunk_num + 1}/{total_chunks} for column {col}: {str(e)}")
-                        continue
+                            values = non_null.astype(np.float64)
+                            unique_values_source.update(values.tolist())
+                            source_values.extend(values.tolist())
+                        source_sum += np.float64(non_null.sum())
+                    else:
+                        unique_values_source.update(chunk[col].dropna().astype(str).tolist())
                 
-                # Process target data in chunks with memory optimization
+                # Process target data in chunks
                 unique_values_target = set()
-                target_sum = np.float64(0)
+                target_sum = 0.0
                 target_values = []
                 
                 # Determine if column is integer type in target
                 is_integer = np.issubdtype(target[col].dtype, np.integer)
                 
-                # Calculate total chunks for target
-                total_target_chunks = (len(target) + chunk_size - 1) // chunk_size
-                
-                for chunk_num in range(total_target_chunks):
-                    try:
-                        # Get chunk indices
-                        start_idx = chunk_num * chunk_size
-                        end_idx = min(start_idx + chunk_size, len(target))
-                        
-                        # Process chunk
-                        chunk = target.iloc[start_idx:end_idx]
-                        col_summary['target_null_count'] += np.int64(chunk[col].isnull().sum())
-                        
-                        # Handle numeric values
-                        if np.issubdtype(chunk[col].dtype, np.number):
-                            non_null = chunk[col].dropna()
-                            if len(non_null) > 0:
-                                if is_integer:
-                                    values = non_null.astype(np.int64)
-                                    unique_values_target.update(values.tolist())
-                                    target_values.extend(values.tolist())
-                                else:
-                                    values = non_null.astype(np.float64)
-                                    unique_values_target.update(values.tolist())
-                                    target_values.extend(values.tolist())
-                                target_sum = np.add(target_sum, np.float64(non_null.sum()), casting='safe')
+                for i in range(0, len(target), chunk_size):
+                    chunk = target.iloc[i:i + chunk_size]
+                    col_summary['target_null_count'] += np.int64(chunk[col].isnull().sum())
+                    
+                    # Handle unique values based on dtype
+                    if np.issubdtype(chunk[col].dtype, np.number):
+                        non_null = chunk[col].dropna()
+                        if is_integer:
+                            values = non_null.astype(np.int64)
+                            unique_values_target.update(values.tolist())
+                            target_values.extend(values.tolist())
                         else:
-                            # Handle non-numeric values
-                            non_null = chunk[col].dropna()
-                            if len(non_null) > 0:
-                                unique_values_target.update(non_null.astype(str).tolist())
+                            values = non_null.astype(np.float64)
+                            unique_values_target.update(values.tolist())
+                            target_values.extend(values.tolist())
+                        target_sum += np.float64(non_null.sum())
+                    else:
+                        unique_values_target.update(chunk[col].dropna().astype(str).tolist())
+                
+                # Convert counts to np.int64
+                col_summary['source_unique_count'] = np.int64(len(unique_values_source))
+                col_summary['target_unique_count'] = np.int64(len(unique_values_target))
+                
+                # Convert null counts to np.int64 if they aren't already
+                col_summary['source_null_count'] = np.int64(col_summary['source_null_count'])
+                col_summary['target_null_count'] = np.int64(col_summary['target_null_count'])
+                
+                # Convert all integer values to Python int for JSON serialization
+                for key in ['source_unique_count', 'target_unique_count', 'source_null_count', 'target_null_count']:
+                    col_summary[key] = int(col_summary[key])
+                
+                # For numeric columns, calculate statistics
+                if np.issubdtype(source[col].dtype, np.number):
+                    try:
+                        # Convert to numpy arrays with explicit dtype based on data type
+                        if np.issubdtype(source[col].dtype, np.integer):
+                            source_values = np.array(source_values, dtype=np.int64)
+                            target_values = np.array(target_values, dtype=np.int64)
+                            # Convert to float64 for calculations
+                            source_values = source_values.astype(np.float64)
+                            target_values = target_values.astype(np.float64)
+                        else:
+                            source_values = np.array(source_values, dtype=np.float64)
+                            target_values = np.array(target_values, dtype=np.float64)
                         
-                        # Clear chunk memory
-                        del chunk, non_null
-                        if 'values' in locals():
-                            del values
+                        # Calculate statistics using numpy's methods
+                        stats = {
+                            'source_sum': np.float64(source_sum),
+                            'target_sum': np.float64(target_sum),
+                            'source_mean': np.float64(np.mean(source_values)) if len(source_values) > 0 else np.float64(0),
+                            'target_mean': np.float64(np.mean(target_values)) if len(target_values) > 0 else np.float64(0),
+                            'source_std': np.float64(np.std(source_values)) if len(source_values) > 0 else np.float64(0),
+                            'target_std': np.float64(np.std(target_values)) if len(target_values) > 0 else np.float64(0)
+                        }
                         
-                        # Force garbage collection periodically
-                        if chunk_num % 10 == 0:
-                            gc.collect()
-                            
+                        # Convert numpy types to Python types for JSON serialization
+                        col_summary.update({k: float(v) for k, v in stats.items()})
+                        
                     except Exception as e:
-                        logger.error(f"Error processing target chunk {chunk_num + 1}/{total_target_chunks} for column {col}: {str(e)}")
-                        continue
-                
-                try:
-                    # Calculate counts with proper type handling
-                    col_summary['source_unique_count'] = int(np.int64(len(unique_values_source)))
-                    col_summary['target_unique_count'] = int(np.int64(len(unique_values_target)))
-                    col_summary['source_null_count'] = int(np.int64(col_summary['source_null_count']))
-                    col_summary['target_null_count'] = int(np.int64(col_summary['target_null_count']))
-                    
-                    # Clear unique value sets to free memory
-                    del unique_values_source, unique_values_target
-                    
-                    # Calculate statistics for numeric columns
-                    if np.issubdtype(source[col].dtype, np.number):
-                        try:
-                            # Convert to numpy arrays with proper types
-                            source_arr = np.array(source_values, dtype=np.float64)
-                            target_arr = np.array(target_values, dtype=np.float64)
-                            
-                            # Calculate statistics safely
-                            stats = {
-                                'source_sum': float(source_sum),
-                                'target_sum': float(target_sum),
-                                'source_mean': float(np.mean(source_arr)) if len(source_arr) > 0 else 0.0,
-                                'target_mean': float(np.mean(target_arr)) if len(target_arr) > 0 else 0.0,
-                                'source_std': float(np.std(source_arr)) if len(source_arr) > 0 else 0.0,
-                                'target_std': float(np.std(target_arr)) if len(target_arr) > 0 else 0.0
-                            }
-                            
-                            # Update summary with statistics
-                            col_summary.update(stats)
-                            
-                            # Clear arrays
-                            del source_arr, target_arr
-                            
-                        except Exception as e:
-                            logger.error(f"Error calculating statistics for column {col}: {str(e)}")
-                            col_summary.update({
-                                'source_sum': 0.0,
-                                'target_sum': 0.0,
-                                'source_mean': 0.0,
-                                'target_mean': 0.0,
-                                'source_std': 0.0,
-                                'target_std': 0.0
-                            })
-                    
-                    # Clear value lists
-                    del source_values, target_values
-                    
-                    # Force garbage collection
-                    gc.collect()
-                    
-                except Exception as e:
-                    logger.error(f"Error in final statistics calculation for column {col}: {str(e)}")
-                    raise
-                
-                # Log completion of column processing
-                logger.info(f"Completed processing column: {col}")
+                        logger.warning(f"Error calculating statistics for column {col}: {str(e)}")
+                        col_summary.update({
+                            'source_sum': 0.0,
+                            'target_sum': 0.0,
+                            'source_mean': 0.0,
+                            'target_mean': 0.0,
+                            'source_std': 0.0,
+                            'target_std': 0.0
+                        })
                 
                 summary[col] = col_summary
                 
