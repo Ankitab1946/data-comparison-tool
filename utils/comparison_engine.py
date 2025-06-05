@@ -531,7 +531,13 @@ class ComparisonEngine:
             source_type = str(self.source_df[s_col].dtype)
             target_type = str(self.target_df[t_col].dtype) if t_col else 'unknown'
             
-            # Check if either type is from SQL Server (contains SQL types like varchar, nvarchar, etc.)
+            # Convert 'object' type to 'string'
+            if source_type == 'object':
+                source_type = 'string'
+            if target_type == 'object':
+                target_type = 'string'
+            
+            # Check if either type is from SQL Server
             is_sql_source = any(sql_type in source_type.lower() for sql_type in self.SQL_TYPE_MAPPING.keys())
             is_sql_target = any(sql_type in target_type.lower() for sql_type in self.SQL_TYPE_MAPPING.keys())
             
@@ -539,30 +545,57 @@ class ComparisonEngine:
             source_mapped = self._get_mapped_type(s_col, source_type, is_sql_source)
             target_mapped = self._get_mapped_type(s_col, target_type, is_sql_target) if t_col else source_mapped
             
+            # Store original types
+            original_source_type = source_type
+            original_target_type = target_type
+            
             # Determine final type
             if source_mapped == target_mapped:
                 mapped_type = source_mapped
             else:
                 # For mismatched types, prefer string for text-like columns
-                if 'char' in source_type.lower() or 'text' in source_type.lower() or \
-                   'char' in target_type.lower() or 'text' in target_type.lower():
+                if any(t in str(source_type).lower() or t in str(target_type).lower() 
+                      for t in ['char', 'text', 'string', 'object']):
                     mapped_type = 'string'
+                    original_source_type = 'string'
+                    original_target_type = 'string'
                 else:
                     # For numeric types, use the wider type
                     if all(t in ['int32', 'int64', 'float32', 'float64'] for t in [source_mapped, target_mapped]):
                         mapped_type = 'float64'  # widest numeric type
                     else:
                         mapped_type = 'string'  # fallback for incompatible types
+                        original_source_type = 'string'
+                        original_target_type = 'string'
 
-            mapping.append({
+            # Create mapping with editable types
+            mapping_entry = {
                 'source': s_col,
                 'target': t_col or '',
                 'join': False,
                 'data_type': mapped_type,
                 'exclude': False,
-                'source_type': source_type,  # Original source type for reference
-                'target_type': target_type   # Original target type for reference
-            })
+                'source_type': original_source_type,
+                'target_type': original_target_type,
+                'editable': True,  # Flag to indicate type is editable
+                'original_source_type': original_source_type,  # Keep original for reference
+                'original_target_type': original_target_type   # Keep original for reference
+            }
+            
+            # Special handling for memory-intensive numeric columns
+            if mapped_type in ['float64', 'int64']:
+                # Check if column has too many unique values
+                unique_count = min(
+                    self.source_df[s_col].nunique() if s_col in self.source_df else 0,
+                    self.target_df[t_col].nunique() if t_col in self.target_df else 0
+                )
+                if unique_count > 1000000:  # Threshold for large columns
+                    mapping_entry['data_type'] = 'string'
+                    mapping_entry['source_type'] = 'string'
+                    mapping_entry['target_type'] = 'string'
+                    logger.warning(f"Converting {s_col} to string due to high cardinality")
+            
+            mapping.append(mapping_entry)
 
         return mapping
 
@@ -595,15 +628,40 @@ class ComparisonEngine:
             raise ValueError("Mapping must be set before updating types")
             
         for m in self.mapping:
-            if m['source'] == column:
+            if m['source'] == column and m.get('editable', True):
+                # Convert 'object' to 'string'
+                if source_type == 'object':
+                    source_type = 'string'
+                if target_type == 'object':
+                    target_type = 'string'
+                
+                # Update types
                 if source_type:
                     m['source_type'] = source_type
                     self.source_types[column] = source_type
                 if target_type:
                     m['target_type'] = target_type
                     self.target_types[column] = target_type
+                
+                # Determine new mapped type
+                new_source_type = source_type or m['source_type']
+                new_target_type = target_type or m['target_type']
+                
+                # Check for memory-intensive numeric types
+                if new_source_type in ['float64', 'int64'] or new_target_type in ['float64', 'int64']:
+                    unique_count = min(
+                        self.source_df[column].nunique() if column in self.source_df else 0,
+                        self.target_df[column].nunique() if column in self.target_df else 0
+                    )
+                    if unique_count > 1000000:  # Threshold for large columns
+                        logger.warning(f"Converting {column} to string due to high cardinality")
+                        m['data_type'] = 'string'
+                        m['source_type'] = 'string'
+                        m['target_type'] = 'string'
+                        return
+                
                 # Update the mapped type
-                m['data_type'] = self._get_mapped_type(column, source_type or m['source_type'], True)
+                m['data_type'] = self._get_mapped_type(column, new_source_type, True)
                 break
 
     def _process_in_chunks(self, source_df: pd.DataFrame, target_df: pd.DataFrame, 
