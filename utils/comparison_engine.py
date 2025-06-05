@@ -366,744 +366,917 @@
 #         except Exception as e:
 #             logger.error(f"Error in get_distinct_values: {str(e)}")
 #             return {}
-"""Core comparison engine for data comparison operations."""
+"""Main Streamlit application for the Comparison Tool."""
+import streamlit as st
 import pandas as pd
-import numpy as np
-from typing import Dict, List, Tuple, Any, Optional
-import logging
-from ydata_profiling import ProfileReport
 from pathlib import Path
+import tempfile
+import os
+from typing import Dict, Any, Tuple
+from datetime import datetime
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# Import local modules
+from utils.data_loader import DataLoader
+from utils.comparison_engine import ComparisonEngine
+from reports.report_generator import ReportGenerator
 
-class ComparisonEngine:
-    # SQL Server to pandas type mapping
-    SQL_TYPE_MAPPING = {
-        'varchar': 'string',
-        'nvarchar': 'string',
-        'char': 'string',
-        'nchar': 'string',
-        'text': 'string',
-        'ntext': 'string',
-        'int': 'int32',
-        'bigint': 'int64',
-        'smallint': 'int32',
-        'tinyint': 'int32',
-        'numeric': 'float64',
-        'decimal': 'float64',
-        'float': 'float64',
-        'real': 'float32',
-        'bit': 'bool',
-        'date': 'datetime64[ns]',
-        'datetime': 'datetime64[ns]',
-        'datetime2': 'datetime64[ns]',
-        'datetimeoffset': 'datetime64[ns]',
-        'time': 'datetime64[ns]',
-        'binary': 'string',
-        'varbinary': 'string',
-        'uniqueidentifier': 'string',
-        'xml': 'string',
-        'unsupported': 'string'
-    }
+def update_column_mapping(edited_mapping, engine):
+    """Helper function to safely update column mapping in session state."""
+    if edited_mapping is not None:
+        try:
+            # Convert edited mapping to records
+            mapping_records = edited_mapping.to_dict('records')
+            
+            # Update types in the engine for each column
+            for mapping in mapping_records:
+                if mapping['source_type'] == 'object':
+                    mapping['source_type'] = 'string'
+                if mapping['target_type'] == 'object':
+                    mapping['target_type'] = 'string'
+                    
+                # Update engine's type mapping
+                engine.update_column_types(
+                    mapping['source'],
+                    source_type=mapping['source_type'],
+                    target_type=mapping['target_type']
+                )
+            
+            # Store updated mapping in session state
+            st.session_state.column_mapping = mapping_records
+            return True
+            
+        except Exception as e:
+            st.error(f"Error updating column mapping: {str(e)}")
+            st.session_state.column_mapping = engine.auto_map_columns()
+            return False
+    else:
+        st.warning("No changes made to column mapping")
+        if 'column_mapping' not in st.session_state:
+            st.session_state.column_mapping = engine.auto_map_columns()
+        return False
 
-    # Pandas type mapping
-    PANDAS_TYPE_MAPPING = {
-        'object': 'string',
-        'string': 'string',
-        'int64': 'int64',
-        'int32': 'int32',
-        'float64': 'float64',
-        'float32': 'float32',
-        'bool': 'bool',
-        'datetime64[ns]': 'datetime64[ns]',
-        'category': 'string',
-        'unsupported': 'string'
-    }
+def create_mapping_editor(mapping_data, target_columns, key_suffix=""):
+    """Create a data editor for column mapping with error handling."""
+    try:
+        edited_mapping = st.data_editor(
+            mapping_data,
+            column_config={
+                "source": st.column_config.TextColumn(
+                    "Source Column",
+                    disabled=True,
+                    help="Original column name from source data"
+                ),
+                "target": st.column_config.SelectboxColumn(
+                    "Target Column",
+                    options=[""] + list(target_columns),
+                    help="Select matching column from target data"
+                ),
+                "join": st.column_config.CheckboxColumn(
+                    "Join Column",
+                    help="Use this column to match records between source and target"
+                ),
+                "source_type": st.column_config.SelectboxColumn(
+                    "Source Type",
+                    options=list(TYPE_MAPPING.values()),
+                    help="Data type for source column"
+                ),
+                "target_type": st.column_config.SelectboxColumn(
+                    "Target Type",
+                    options=list(TYPE_MAPPING.values()),
+                    help="Data type for target column"
+                ),
+                "data_type": st.column_config.SelectboxColumn(
+                    "Comparison Type",
+                    options=list(TYPE_MAPPING.values()),
+                    help="Data type for comparison"
+                ),
+                "exclude": st.column_config.CheckboxColumn(
+                    "Exclude",
+                    help="Exclude this column from comparison"
+                )
+            },
+            hide_index=True,
+            key=f"mapping_editor_{key_suffix}"
+        )
+        return edited_mapping
+    except Exception as e:
+        st.error(f"Error creating mapping editor: {str(e)}")
+        return None
 
-    def __init__(self, source_df: pd.DataFrame, target_df: pd.DataFrame):
-        """
-        Initialize the comparison engine with source and target dataframes.
+def get_connection_inputs(source_type: str, prefix: str) -> Dict[str, Any]:
+    """Get connection parameters based on source type."""
+    params = {}
+    
+    if source_type in ['SQL Server', 'Teradata']:
+        # Convert source type to the format expected by DataLoader
+        db_type = source_type.lower().replace(' ', '_')
         
-        Args:
-            source_df: Source DataFrame
-            target_df: Target DataFrame
-        """
-        self.source_df = source_df
-        self.target_df = target_df
-        self.mapping = None
-        self.join_columns = None
-        self.excluded_columns = []
-        self.type_overrides = {}  # Store user-defined type overrides
-
-    def set_column_type(self, column: str, dtype: str):
-        """
-        Set a specific data type for a column.
-        
-        Args:
-            column: Column name
-            dtype: Data type to use for the column
-        """
-        self.type_overrides[column] = dtype
-
-    def _get_mapped_type(self, column: str, current_type: str, is_sql_type: bool = False) -> str:
-        """
-        Get the mapped data type for a column.
-        
-        Args:
-            column: Column name
-            current_type: Current data type
-            is_sql_type: Whether the type is from SQL Server
-            
-        Returns:
-            Mapped data type string
-        """
-        # Check for user override first
-        if column in self.type_overrides:
-            return self.type_overrides[column]
-        
-        # Special handling for ColumnNameID
-        if column == 'ColumnNameID':
-            return 'string'
-            
-        # Convert current type to lowercase and clean it
-        current_type = str(current_type).lower().strip()
-        # Remove length specifications like varchar(50)
-        current_type = current_type.split('(')[0]
-        
-        # Handle SQL Server types
-        if is_sql_type:
-            # Try exact match first
-            if current_type in self.SQL_TYPE_MAPPING:
-                return self.SQL_TYPE_MAPPING[current_type]
-            # Try partial match
-            for sql_type, pandas_type in self.SQL_TYPE_MAPPING.items():
-                if sql_type in current_type:
-                    return pandas_type
-        
-        # Handle Pandas types
-        else:
-            # Remove [ns] from datetime types
-            base_type = current_type.split('[')[0]
-            # Try exact match first
-            if base_type in self.PANDAS_TYPE_MAPPING:
-                return self.PANDAS_TYPE_MAPPING[base_type]
-            # Try partial match
-            for pandas_type, mapped_type in self.PANDAS_TYPE_MAPPING.items():
-                if pandas_type in base_type:
-                    return mapped_type
-        
-        # If type contains 'char' or 'text', treat as string
-        if 'char' in current_type or 'text' in current_type:
-            return 'string'
-            
-        # Default to string for unknown types
-        logger.warning(f"Unknown type '{current_type}' for column '{column}', defaulting to string")
-        return 'string'
-
-    def auto_map_columns(self) -> List[Dict[str, Any]]:
-        """
-        Automatically map columns between source and target based on names and data types.
-        
-        Returns:
-            List of dictionaries containing column mappings
-        """
-        source_cols = list(self.source_df.columns)
-        target_cols = list(self.target_df.columns)
-        mapping = []
-
-        for s_col in source_cols:
-            # Try exact match first
-            t_col = s_col if s_col in target_cols else None
-            
-            # If no exact match, try case-insensitive match
-            if not t_col:
-                t_col = next((col for col in target_cols 
-                            if col.lower() == s_col.lower()), None)
-            
-            # If still no match, try removing special characters
-            if not t_col:
-                s_clean = ''.join(e.lower() for e in s_col if e.isalnum())
-                t_col = next((col for col in target_cols 
-                            if ''.join(e.lower() for e in col if e.isalnum()) == s_clean), None)
-
-            # Get source and target types
-            source_type = str(self.source_df[s_col].dtype)
-            target_type = str(self.target_df[t_col].dtype) if t_col else 'unknown'
-            
-            # Convert 'object' type to 'string'
-            if source_type == 'object':
-                source_type = 'string'
-            if target_type == 'object':
-                target_type = 'string'
-            
-            # Check if either type is from SQL Server
-            is_sql_source = any(sql_type in source_type.lower() for sql_type in self.SQL_TYPE_MAPPING.keys())
-            is_sql_target = any(sql_type in target_type.lower() for sql_type in self.SQL_TYPE_MAPPING.keys())
-            
-            # Get mapped types
-            source_mapped = self._get_mapped_type(s_col, source_type, is_sql_source)
-            target_mapped = self._get_mapped_type(s_col, target_type, is_sql_target) if t_col else source_mapped
-            
-            # Store original types
-            original_source_type = source_type
-            original_target_type = target_type
-            
-            # Determine final type
-            if source_mapped == target_mapped:
-                mapped_type = source_mapped
+        col1, col2 = st.columns(2)
+        with col1:
+            params['server'] = st.text_input(
+                f"{source_type} Server",
+                key=f"{prefix}_server"
+            )
+            params['database'] = st.text_input(
+                "Database Name",
+                key=f"{prefix}_database"
+            )
+            # Add Windows Authentication option
+            use_windows_auth = st.checkbox(
+                "Use Windows Authentication",
+                key=f"{prefix}_windows_auth"
+            )
+        with col2:
+            if not use_windows_auth:
+                params['username'] = st.text_input(
+                    "Username",
+                    key=f"{prefix}_username"
+                )
+                params['password'] = st.text_input(
+                    "Password",
+                    type="password",
+                    key=f"{prefix}_password"
+                )
             else:
-                # For mismatched types, prefer string for text-like columns
-                if any(t in str(source_type).lower() or t in str(target_type).lower() 
-                      for t in ['char', 'text', 'string', 'object']):
-                    mapped_type = 'string'
-                    original_source_type = 'string'
-                    original_target_type = 'string'
+                params['trusted_connection'] = True
+        
+        params['type'] = db_type
+        
+        # Option to use query or table
+        query_type = st.radio(
+            "Select Input Type",
+            ["Table", "Query"],
+            key=f"{prefix}_query_type"
+        )
+        if query_type == "Table":
+            params['table'] = st.text_input(
+                "Table Name",
+                key=f"{prefix}_table"
+            )
+        else:
+            params['query'] = st.text_area(
+                "SQL Query",
+                key=f"{prefix}_query"
+            )
+            
+    elif source_type == 'Stored Procs':
+        col1, col2 = st.columns(2)
+        with col1:
+            params['server'] = st.text_input("Database Server")
+            params['database'] = st.text_input("Database Name")
+        with col2:
+            params['username'] = st.text_input("Username")
+            params['password'] = st.text_input("Password", type="password")
+        
+        params['type'] = 'sql_server'  # Default to SQL Server for stored procs
+        params['proc_name'] = st.text_input("Stored Procedure Name")
+        
+        # Optional procedure parameters
+        if st.checkbox("Add Procedure Parameters"):
+            param_count = st.number_input("Number of Parameters", min_value=1, value=1)
+            params['params'] = {}
+            for i in range(param_count):
+                col1, col2 = st.columns(2)
+                with col1:
+                    param_name = st.text_input(f"Parameter {i+1} Name")
+                with col2:
+                    param_value = st.text_input(f"Parameter {i+1} Value")
+                if param_name:
+                    params['params'][param_name] = param_value
+                    
+    elif source_type == 'API':
+        params['url'] = st.text_input("API URL")
+        params['method'] = st.selectbox("HTTP Method", ["GET", "POST"])
+        
+        if st.checkbox("Add Headers"):
+            params['headers'] = {}
+            header_count = st.number_input("Number of Headers", min_value=1, value=1)
+            for i in range(header_count):
+                col1, col2 = st.columns(2)
+                with col1:
+                    header_name = st.text_input(f"Header {i+1} Name")
+                with col2:
+                    header_value = st.text_input(f"Header {i+1} Value")
+                if header_name:
+                    params['headers'][header_name] = header_value
+        
+        if params['method'] == "POST":
+            params['data'] = st.text_area("Request Body (JSON)")
+            
+    return params
+
+# Constants
+SUPPORTED_SOURCES = [
+    'CSV file',
+    'DAT file',
+    'SQL Server',
+    'Stored Procs',
+    'Teradata',
+    'API',
+    'Parquet file',
+    'Flat files inside zipped folder'
+]
+
+TYPE_MAPPING = {
+    'int': 'int32',
+    'int64': 'int64',
+    'numeric': 'int64',
+    'bigint': 'int64',
+    'smallint': 'int64',
+    'varchar': 'string',
+    'nvarchar': 'string',
+    'char': 'string',
+    'date': 'datetime64[ns]',
+    'datetime': 'datetime64[ns]',
+    'decimal': 'float',
+    'float': 'float',
+    'bit': 'bool',
+    'nchar': 'char',
+    'boolean': 'bool'
+}
+
+MAX_PREVIEW_ROWS = 1000
+
+# Page configuration
+st.set_page_config(
+    page_title="Data Comparison Tool",
+    page_icon="📊",
+    layout="wide"
+)
+
+# Custom CSS
+st.markdown("""
+<style>
+    .main {
+        padding: 2rem;
+    }
+    .stButton > button {
+        width: 100%;
+    }
+    .report-box {
+        padding: 1rem;
+        border-radius: 0.5rem;
+        border: 1px solid #e0e0e0;
+        margin: 1rem 0;
+    }
+    .header-banner {
+        padding: 2rem;
+        background: linear-gradient(90deg, #1E3D59 0%, #1E3D59 100%);
+        color: white;
+        border-radius: 0.5rem;
+        margin-bottom: 2rem;
+        text-align: center;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# Session state initialization
+if 'comparison_results' not in st.session_state:
+    st.session_state.comparison_results = None
+if 'report_paths' not in st.session_state:
+    st.session_state.report_paths = None
+
+def load_data(source_type: str, file_upload, connection_params: Dict[str, Any] = None, 
+              delimiter: str = ',') -> pd.DataFrame:
+    """Load data based on the selected source type."""
+    loader = DataLoader()
+    
+    if source_type in ['CSV file', 'DAT file']:
+        if file_upload is None:
+            raise ValueError(f"Please upload a {source_type}")
+            
+        try:
+            # Save uploaded file temporarily
+            with tempfile.NamedTemporaryFile(delete=False, suffix=file_upload.name) as tmp_file:
+                tmp_file.write(file_upload.getvalue())
+                
+                # Try reading with pandas directly first
+                try:
+                    df = pd.read_csv(tmp_file.name, delimiter=delimiter)
+                    if df.empty:
+                        raise ValueError("No data found in the file")
+                    return df
+                except pd.errors.EmptyDataError:
+                    raise ValueError("The file appears to be empty")
+                except Exception as e:
+                    # If direct reading fails, try chunked reading
+                    return loader.read_chunked_file(tmp_file.name, delimiter=delimiter)
+        except Exception as e:
+            raise ValueError(f"Error reading {source_type}: {str(e)}")
+            
+    elif source_type == 'Parquet file':
+        if file_upload is None:
+            raise ValueError("Please upload a Parquet file")
+            
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.parquet') as tmp_file:
+                tmp_file.write(file_upload.getvalue())
+                df = loader.read_parquet(tmp_file.name)
+                if df.empty:
+                    raise ValueError("No data found in the Parquet file")
+                return df
+        except Exception as e:
+            raise ValueError(f"Error reading Parquet file: {str(e)}")
+            
+    elif source_type == 'Flat files inside zipped folder':
+        if file_upload is None:
+            raise ValueError("Please upload a ZIP file")
+            
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.zip') as tmp_file:
+                tmp_file.write(file_upload.getvalue())
+                extracted_files = loader.extract_zip(tmp_file.name)
+                
+                if not extracted_files:
+                    raise ValueError("No files found in ZIP archive")
+                
+                # Combine all extracted files
+                dfs = []
+                for file_path in extracted_files:
+                    if file_path.endswith(('.csv', '.dat')):
+                        try:
+                            # Try reading with pandas directly first
+                            df = pd.read_csv(file_path, delimiter=delimiter)
+                            if not df.empty:
+                                dfs.append(df)
+                        except Exception:
+                            # If direct reading fails, try chunked reading
+                            df = loader.read_chunked_file(file_path, delimiter=delimiter)
+                            if not df.empty:
+                                dfs.append(df)
+                
+                if not dfs:
+                    raise ValueError("No valid data files found in ZIP archive")
+                    
+                combined_df = pd.concat(dfs, ignore_index=True)
+                if combined_df.empty:
+                    raise ValueError("No data found in any of the files")
+                    
+                return combined_df
+        except Exception as e:
+            raise ValueError(f"Error processing ZIP file: {str(e)}")
+            
+    elif source_type in ['SQL Server', 'Teradata']:
+        if not connection_params:
+            raise ValueError(f"Please provide connection parameters for {source_type}")
+            
+        try:
+            engine = loader.connect_database(connection_params)
+            
+            try:
+                if 'query' in connection_params and connection_params['query'].strip():
+                    df = pd.read_sql(connection_params['query'], engine)
+                elif 'table' in connection_params and connection_params['table'].strip():
+                    df = pd.read_sql(connection_params['table'], engine)
                 else:
-                    # For numeric types, use the wider type
-                    if all(t in ['int32', 'int64', 'float32', 'float64'] for t in [source_mapped, target_mapped]):
-                        mapped_type = 'float64'  # widest numeric type
-                    else:
-                        mapped_type = 'string'  # fallback for incompatible types
-                        original_source_type = 'string'
-                        original_target_type = 'string'
-
-            # Create mapping with editable types
-            mapping_entry = {
-                'source': s_col,
-                'target': t_col or '',
-                'join': False,
-                'data_type': mapped_type,
-                'exclude': False,
-                'source_type': original_source_type,
-                'target_type': original_target_type,
-                'editable': True,  # Flag to indicate type is editable
-                'original_source_type': original_source_type,  # Keep original for reference
-                'original_target_type': original_target_type   # Keep original for reference
-            }
-            
-            # Special handling for memory-intensive numeric columns
-            if mapped_type in ['float64', 'int64']:
-                # Check if column has too many unique values
-                unique_count = min(
-                    self.source_df[s_col].nunique() if s_col in self.source_df else 0,
-                    self.target_df[t_col].nunique() if t_col in self.target_df else 0
-                )
-                if unique_count > 1000000:  # Threshold for large columns
-                    mapping_entry['data_type'] = 'string'
-                    mapping_entry['source_type'] = 'string'
-                    mapping_entry['target_type'] = 'string'
-                    logger.warning(f"Converting {s_col} to string due to high cardinality")
-            
-            mapping.append(mapping_entry)
-
-        return mapping
-
-    def set_mapping(self, mapping: List[Dict[str, Any]], join_columns: List[str]):
-        """
-        Set the column mapping and join columns for comparison.
-        
-        Args:
-            mapping: List of mapping dictionaries
-            join_columns: List of columns to use for joining
-        """
-        self.mapping = mapping
-        self.join_columns = join_columns
-        self.excluded_columns = [m['source'] for m in mapping if m['exclude']]
-        
-        # Store original data types
-        self.source_types = {m['source']: m.get('source_type', '') for m in mapping}
-        self.target_types = {m['source']: m.get('target_type', '') for m in mapping}
-
-    def update_column_types(self, column: str, source_type: str = None, target_type: str = None):
-        """
-        Update the data types for a column.
-        
-        Args:
-            column: Column name
-            source_type: New source data type
-            target_type: New target data type
-        """
-        if not self.mapping:
-            raise ValueError("Mapping must be set before updating types")
-            
-        for m in self.mapping:
-            if m['source'] == column and m.get('editable', True):
-                # Convert 'object' to 'string'
-                if source_type == 'object':
-                    source_type = 'string'
-                if target_type == 'object':
-                    target_type = 'string'
+                    raise ValueError("Please provide either a query or table name")
                 
-                # Update types
-                if source_type:
-                    m['source_type'] = source_type
-                    self.source_types[column] = source_type
-                if target_type:
-                    m['target_type'] = target_type
-                    self.target_types[column] = target_type
+                if df.empty:
+                    raise ValueError("No data returned from the database")
+                return df
                 
-                # Determine new mapped type
-                new_source_type = source_type or m['source_type']
-                new_target_type = target_type or m['target_type']
+            except Exception as e:
+                raise ValueError(f"Error executing query: {str(e)}")
                 
-                # Check for memory-intensive numeric types
-                if new_source_type in ['float64', 'int64'] or new_target_type in ['float64', 'int64']:
-                    unique_count = min(
-                        self.source_df[column].nunique() if column in self.source_df else 0,
-                        self.target_df[column].nunique() if column in self.target_df else 0
-                    )
-                    if unique_count > 1000000:  # Threshold for large columns
-                        logger.warning(f"Converting {column} to string due to high cardinality")
-                        m['data_type'] = 'string'
-                        m['source_type'] = 'string'
-                        m['target_type'] = 'string'
-                        return
-                
-                # Update the mapped type
-                m['data_type'] = self._get_mapped_type(column, new_source_type, True)
-                break
+        except Exception as e:
+            raise ValueError(f"Database connection error: {str(e)}")
+            
+    elif source_type == 'Stored Procs':
+        if not connection_params:
+            raise ValueError("Please provide stored procedure details")
+            
+        if not connection_params.get('proc_name'):
+            raise ValueError("Stored procedure name is required")
+            
+        try:
+            engine = loader.connect_database(connection_params)
+            df = loader.execute_stored_proc(
+                engine,
+                connection_params['proc_name'],
+                connection_params.get('params')
+            )
+            
+            if df is None or df.empty:
+                raise ValueError("No data returned from stored procedure")
+            return df
+            
+        except Exception as e:
+            raise ValueError(f"Error executing stored procedure: {str(e)}")
+        
+    elif source_type == 'API':
+        if not connection_params:
+            raise ValueError("Please provide API details")
+            
+        if not connection_params.get('url'):
+            raise ValueError("API URL is required")
+            
+        try:
+            df = loader.call_api(
+                connection_params['url'],
+                method=connection_params.get('method', 'GET'),
+                headers=connection_params.get('headers'),
+                params=connection_params.get('params'),
+                data=connection_params.get('data')
+            )
+            
+            if df is None or df.empty:
+                raise ValueError("No data returned from API")
+            return df
+            
+        except Exception as e:
+            raise ValueError(f"API call failed: {str(e)}")
+        
+    else:
+        raise ValueError(f"Unsupported source type: {source_type}")
 
-    def _process_in_chunks(self, source_df: pd.DataFrame, target_df: pd.DataFrame, 
-                          join_columns: List[str], chunk_size: int = 100000) -> Dict[str, pd.DataFrame]:
-        """
-        Process large dataframes in chunks to avoid memory issues.
-        
-        Args:
-            source_df: Source DataFrame
-            target_df: Target DataFrame
-            join_columns: Columns to join on
-            chunk_size: Size of each chunk
-            
-        Returns:
-            Dictionary containing unmatched rows
-        """
-        source_unmatched = []
-        target_unmatched = []
-        
-        # Process in chunks
-        for i in range(0, len(source_df), chunk_size):
-            source_chunk = source_df.iloc[i:i + chunk_size]
-            
-            # Merge chunk with target
-            merged = pd.merge(source_chunk, target_df, on=join_columns, how='outer', indicator=True)
-            
-            # Collect unmatched rows
-            source_unmatched.append(merged[merged['_merge'] == 'left_only'].drop('_merge', axis=1))
-            target_unmatched.append(merged[merged['_merge'] == 'right_only'].drop('_merge', axis=1))
-            
-            # Clear memory
-            del merged
-            
-        return {
-            'source_unmatched': pd.concat(source_unmatched) if source_unmatched else pd.DataFrame(),
-            'target_unmatched': pd.concat(target_unmatched) if target_unmatched else pd.DataFrame()
+def main():
+    # Header
+    st.markdown("""
+        <div class="header-banner">
+            <h1>Data Comparison Tool</h1>
+            <p>Compare data across multiple sources with detailed analysis and reporting</p>
+        </div>
+    """, unsafe_allow_html=True)
+
+    # Source Selection
+    st.subheader("1. Select Source and Target")
+    
+    # Add sample data option with clear UI
+    st.markdown("""
+        <style>
+        .sample-data-section {
+            padding: 1rem;
+            margin-bottom: 2rem;
+            border-radius: 0.5rem;
+            background-color: #f8f9fa;
         }
-
-    def _prepare_dataframes(self) -> Tuple[pd.DataFrame, pd.DataFrame]:
-        """
-        Prepare dataframes for comparison by applying mappings and type conversions.
-        
-        Returns:
-            Tuple of (prepared source DataFrame, prepared target DataFrame)
-        """
-        if not self.mapping:
-            raise ValueError("Mapping must be set before comparison")
-
-        # Create copies to avoid modifying original dataframes
-        source = self.source_df.copy()
-        target = self.target_df.copy()
-
-        # Remove excluded columns
-        source = source[[m['source'] for m in self.mapping if not m['exclude']]]
-        target = target[[m['target'] for m in self.mapping if not m['exclude']]]
-
-        # Rename target columns to match source for comparison
-        rename_dict = {m['target']: m['source'] 
-                      for m in self.mapping 
-                      if not m['exclude'] and m['target']}
-        target = target.rename(columns=rename_dict)
-
-        # Convert data types for compatibility
-        for mapping in self.mapping:
-            if mapping['exclude'] or not mapping['target']:
-                continue
-
-            source_col = mapping['source']
-            try:
-                # Get source and target types
-                source_type = str(source[source_col].dtype)
-                target_type = str(target[source_col].dtype)
-                
-                # Check if either type is from SQL Server
-                is_sql_source = any(sql_type in source_type.lower() for sql_type in self.SQL_TYPE_MAPPING.keys())
-                is_sql_target = any(sql_type in target_type.lower() for sql_type in self.SQL_TYPE_MAPPING.keys())
-                
-                # Get the mapped type from the mapping configuration
-                mapped_type = mapping.get('data_type', 'string')
-                
-                # Special handling for ColumnNameID and text-like columns
-                if source_col == 'ColumnNameID' or \
-                   any(t in source_type.lower() or t in target_type.lower() 
-                       for t in ['char', 'text', 'string', 'object']):
-                    source[source_col] = source[source_col].fillna('').astype(str)
-                    target[source_col] = target[source_col].fillna('').astype(str)
-                    continue
-                
-                # Convert based on mapped type
+        </style>
+    """, unsafe_allow_html=True)
+    
+    # Sample data section
+    with st.container():
+        st.markdown('<div class="sample-data-section">', unsafe_allow_html=True)
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            use_sample = st.checkbox("📊 Use Sample Data for Testing", 
+                                   value=False,
+                                   help="Load pre-configured sample data to test the comparison functionality")
+        with col2:
+            if st.button("Load Sample", disabled=not use_sample):
                 try:
-                    if mapped_type == 'string':
-                        source[source_col] = source[source_col].fillna('').astype(str)
-                        target[source_col] = target[source_col].fillna('').astype(str)
-                    elif mapped_type in ['int32', 'int64']:
-                        source[source_col] = pd.to_numeric(source[source_col], errors='coerce').astype(mapped_type)
-                        target[source_col] = pd.to_numeric(target[source_col], errors='coerce').astype(mapped_type)
-                    elif mapped_type in ['float32', 'float64']:
-                        source[source_col] = pd.to_numeric(source[source_col], errors='coerce').astype(mapped_type)
-                        target[source_col] = pd.to_numeric(target[source_col], errors='coerce').astype(mapped_type)
-                    elif mapped_type == 'datetime64[ns]':
-                        source[source_col] = pd.to_datetime(source[source_col], errors='coerce')
-                        target[source_col] = pd.to_datetime(target[source_col], errors='coerce')
-                    elif mapped_type == 'bool':
-                        source[source_col] = source[source_col].fillna(False).astype(bool)
-                        target[source_col] = target[source_col].fillna(False).astype(bool)
+                    # Get the current directory
+                    current_dir = os.path.dirname(os.path.abspath(__file__))
+                    
+                    # Construct paths to sample data files
+                    source_path = os.path.join(current_dir, "sample_data", "source.csv")
+                    target_path = os.path.join(current_dir, "sample_data", "target.csv")
+                    
+                    # Load the data
+                    source_data = pd.read_csv(source_path)
+                    target_data = pd.read_csv(target_path)
+                    
+                    # Store in session state
+                    st.session_state.source_data = source_data
+                    st.session_state.target_data = target_data
+                    
+                    st.success("✅ Sample data loaded successfully!")
+                    
+                    # Show preview of sample data
+                    st.markdown("### Data Preview")
+                    tab1, tab2 = st.tabs(["Source Data", "Target Data"])
+                    with tab1:
+                        st.dataframe(source_data.head(), use_container_width=True)
+                    with tab2:
+                        st.dataframe(target_data.head(), use_container_width=True)
+                    
+                    # Initialize comparison engine
+                    engine = ComparisonEngine(source_data, target_data)
+                    
+                    # Get automatic mapping
+                    if 'column_mapping' not in st.session_state:
+                        st.session_state.column_mapping = engine.auto_map_columns()
+                    
+                    # Show mapping section
+                    st.subheader("2. Column Mapping")
+                    st.markdown("Configure how columns should be compared between source and target data.")
+                    
+                    # Create mapping editor with enhanced UI
+                    mapping_data = pd.DataFrame(st.session_state.column_mapping)
+                    edited_mapping = create_mapping_editor(mapping_data, target_data.columns, "sample")
+                    
+                    # Update session state with edited mapping
+                    update_column_mapping(edited_mapping, engine)
+                    
+                    # Show mapping summary
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        mapped_cols = sum(1 for m in st.session_state.column_mapping if m['target'])
+                        st.metric("Mapped Columns", f"{mapped_cols}/{len(st.session_state.column_mapping)}")
+                    with col2:
+                        join_cols = sum(1 for m in st.session_state.column_mapping if m['join'])
+                        st.metric("Join Columns", join_cols)
+                    with col3:
+                        excluded_cols = sum(1 for m in st.session_state.column_mapping if m['exclude'])
+                        st.metric("Excluded Columns", excluded_cols)
+                    
+                    # Compare button
+                    if join_cols > 0:
+                        if st.button("Compare Data"):
+                            try:
+                                # Get selected join columns
+                                join_columns = [m['source'] for m in st.session_state.column_mapping if m['join']]
+                                
+                                # Set mapping in comparison engine
+                                engine.set_mapping(st.session_state.column_mapping, join_columns)
+                                
+                                # Perform comparison
+                                comparison_results = engine.compare()
+                                st.session_state.comparison_results = comparison_results
+                                
+                                # Show results
+                                st.subheader("3. Comparison Results")
+                                
+                                # Summary statistics
+                                result_col1, result_col2, result_col3 = st.columns(3)
+                                with result_col1:
+                                    st.metric("Rows Match", "Yes" if comparison_results['rows_match'] else "No")
+                                with result_col2:
+                                    st.metric("Columns Match", "Yes" if comparison_results['columns_match'] else "No")
+                                with result_col3:
+                                    st.metric("Overall Match", "Yes" if comparison_results['match_status'] else "No")
+                                
+                                # Detailed report
+                                with st.expander("View Detailed Report"):
+                                    st.text(comparison_results['datacompy_report'])
+                                    
+                                    if len(comparison_results['source_unmatched_rows']) > 0:
+                                        st.markdown("### Unmatched Rows in Source")
+                                        st.dataframe(comparison_results['source_unmatched_rows'])
+                                        
+                                    if len(comparison_results['target_unmatched_rows']) > 0:
+                                        st.markdown("### Unmatched Rows in Target")
+                                        st.dataframe(comparison_results['target_unmatched_rows'])
+                                
+                            except Exception as e:
+                                st.error(f"Comparison failed: {str(e)}")
                     else:
-                        # Default to string for unknown types
-                        logger.warning(f"Unknown type '{mapped_type}' for column '{source_col}', converting to string")
-                        source[source_col] = source[source_col].fillna('').astype(str)
-                        target[source_col] = target[source_col].fillna('').astype(str)
+                        st.warning("Please select at least one join column for comparison")
                 except Exception as e:
-                    logger.warning(f"Type conversion failed for column {source_col} to {mapped_type}: {str(e)}. Converting to string.")
-                    source[source_col] = source[source_col].fillna('').astype(str)
-                    target[source_col] = target[source_col].fillna('').astype(str)
-            except Exception as e:
-                logger.warning(f"Type conversion failed for column {source_col}: {str(e)}. Converting to string.")
-                source[source_col] = source[source_col].astype(str)
-                target[source_col] = target[source_col].astype(str)
+                    st.error(f"Error loading sample data: {str(e)}")
+        st.markdown('</div>', unsafe_allow_html=True)
 
-        return source, target
-
-    def compare(self, chunk_size: int = 100000) -> Dict[str, Any]:
-        """
-        Perform the comparison between source and target data.
-        
-        Args:
-            chunk_size: Size of chunks for processing large datasets
+    # Manual data upload section
+    if not use_sample:
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown("### Source")
+            source_type = st.selectbox("Select Source Type", SUPPORTED_SOURCES, key="source_type")
             
-        Returns:
-            Dictionary containing comparison results
-        """
-        try:
-            source, target = self._prepare_dataframes()
-            
-            # Initialize comparison results
-            results = {
-                'match_status': False,
-                'rows_match': False,
-                'columns_match': False,
-                'datacompy_report': '',
-                'source_unmatched_rows': pd.DataFrame(),
-                'target_unmatched_rows': pd.DataFrame(),
-                'column_summary': self._generate_column_summary(source, target),
-                'row_counts': {
-                    'source_name': 'Source',
-                    'target_name': 'Target',
-                    'source_count': len(source),
-                    'target_count': len(target)
-                },
-                'distinct_values': {}  # Initialize distinct_values in results
-            }
-
-            # Basic comparison checks
-            results['columns_match'] = set(source.columns) == set(target.columns)
-            results['rows_match'] = len(source) == len(target)
-
-            # Get distinct values for non-numeric columns
-            try:
-                results['distinct_values'] = self.get_distinct_values()
-            except Exception as e:
-                logger.warning(f"Error getting distinct values: {str(e)}")
-                results['distinct_values'] = {}
-
-            # Detailed comparison
-            if self.join_columns:
-                try:
-                    # Process large datasets in chunks
-                    unmatched = self._process_in_chunks(source, target, self.join_columns, chunk_size)
-                    results['source_unmatched_rows'] = unmatched['source_unmatched']
-                    results['target_unmatched_rows'] = unmatched['target_unmatched']
-                    
-                    # Generate detailed comparison report
-                    report_lines = []
-                    report_lines.append("DataCompy Comparison Report")
-                    report_lines.append("=" * 50)
-                    report_lines.append("\nSummary:")
-                    report_lines.append("-" * 20)
-                    report_lines.append(f"Source rows: {len(source)}")
-                    report_lines.append(f"Target rows: {len(target)}")
-                    report_lines.append(f"Unmatched in source: {len(results['source_unmatched_rows'])}")
-                    report_lines.append(f"Unmatched in target: {len(results['target_unmatched_rows'])}")
-                    
-                    # Add column comparison
-                    report_lines.append("\nColumn Analysis:")
-                    report_lines.append("-" * 20)
-                    for col in source.columns:
-                        report_lines.append(f"\nColumn: {col}")
-                        if col in results['column_summary']:
-                            summary = results['column_summary'][col]
-                            report_lines.append(f"Source null count: {summary['source_null_count']}")
-                            report_lines.append(f"Target null count: {summary['target_null_count']}")
-                            report_lines.append(f"Source unique count: {summary['source_unique_count']}")
-                            report_lines.append(f"Target unique count: {summary['target_unique_count']}")
-                            if 'source_sum' in summary:  # Numeric columns
-                                report_lines.append(f"Source sum: {summary['source_sum']}")
-                                report_lines.append(f"Target sum: {summary['target_sum']}")
-                                report_lines.append(f"Source mean: {summary['source_mean']}")
-                                report_lines.append(f"Target mean: {summary['target_mean']}")
-                    
-                    # Add value distribution for join columns
-                    report_lines.append("\nJoin Columns Analysis:")
-                    report_lines.append("-" * 20)
-                    if results['distinct_values']:
-                        for col in self.join_columns:
-                            if col in results['distinct_values']:
-                                report_lines.append(f"\nJoin Column: {col}")
-                                report_lines.append(f"Source unique values: {results['distinct_values'][col]['source_count']}")
-                                report_lines.append(f"Target unique values: {results['distinct_values'][col]['target_count']}")
-                                report_lines.append("Sample values comparison:")
-                                s_vals = list(results['distinct_values'][col]['source_values'].items())[:5]
-                                t_vals = list(results['distinct_values'][col]['target_values'].items())[:5]
-                                report_lines.append("Source top 5: " + ", ".join(f"{v}({c})" for v, c in s_vals))
-                                report_lines.append("Target top 5: " + ", ".join(f"{v}({c})" for v, c in t_vals))
-                    
-                    # Add sample of unmatched rows
-                    if len(results['source_unmatched_rows']) > 0:
-                        report_lines.append("\nSample Unmatched Rows in Source:")
-                        report_lines.append("-" * 20)
-                        sample = results['source_unmatched_rows'].head(5).to_string()
-                        report_lines.append(sample)
-                    
-                    if len(results['target_unmatched_rows']) > 0:
-                        report_lines.append("\nSample Unmatched Rows in Target:")
-                        report_lines.append("-" * 20)
-                        sample = results['target_unmatched_rows'].head(5).to_string()
-                        report_lines.append(sample)
-                    
-                    results['datacompy_report'] = "\n".join(report_lines)
-                    
-                    # Overall match status
-                    results['match_status'] = (
-                        results['columns_match'] and 
-                        results['rows_match'] and
-                        len(results['source_unmatched_rows']) == 0 and
-                        len(results['target_unmatched_rows']) == 0
-                    )
-                except Exception as e:
-                    logger.error(f"Error in detailed comparison: {str(e)}")
-                    results['datacompy_report'] = f"Error in comparison: {str(e)}"
-                    results['match_status'] = False
-
-            return results
-        except Exception as e:
-            logger.error(f"Error in compare method: {str(e)}")
-            return {
-                'match_status': False,
-                'error': str(e),
-                'datacompy_report': f"Comparison failed: {str(e)}"
-            }
-
-    def _generate_column_summary(self, source: pd.DataFrame, 
-                               target: pd.DataFrame) -> Dict[str, Dict[str, Any]]:
-        """
-        Generate detailed column-level comparison summary.
-        
-        Args:
-            source: Prepared source DataFrame
-            target: Prepared target DataFrame
-            
-        Returns:
-            Dictionary containing column-level statistics
-        """
-        summary = {}
-        
-        for col in source.columns:
-            if col in self.join_columns:
-                continue
+            # File upload or connection parameters for source
+            source_data = None
+            if source_type in ['CSV file', 'DAT file', 'Parquet file', 'Flat files inside zipped folder']:
+                source_file = st.file_uploader(f"Upload {source_type}", key="source_file")
+                if source_type in ['CSV file', 'DAT file', 'Flat files inside zipped folder']:
+                    source_delimiter = st.text_input("Source Delimiter", ",", key="source_delimiter")
+            else:
+                source_params = get_connection_inputs(source_type, "source")
                 
-            summary[col] = {
-                'source_null_count': source[col].isnull().sum(),
-                'target_null_count': target[col].isnull().sum(),
-                'source_unique_count': source[col].nunique(),
-                'target_unique_count': target[col].nunique(),
-            }
+        with col2:
+            st.markdown("### Target")
+            target_type = st.selectbox("Select Target Type", SUPPORTED_SOURCES, key="target_type")
             
-            # For numeric columns, add statistical comparisons
-            if np.issubdtype(source[col].dtype, np.number):
-                summary[col].update({
-                    'source_sum': source[col].sum(),
-                    'target_sum': target[col].sum(),
-                    'source_mean': source[col].mean(),
-                    'target_mean': target[col].mean(),
-                    'source_std': source[col].std(),
-                    'target_std': target[col].std(),
-                })
+            # File upload or connection parameters for target
+            target_data = None
+            if target_type in ['CSV file', 'DAT file', 'Parquet file', 'Flat files inside zipped folder']:
+                target_file = st.file_uploader(f"Upload {target_type}", key="target_file")
+                if target_type in ['CSV file', 'DAT file', 'Flat files inside zipped folder']:
+                    target_delimiter = st.text_input("Target Delimiter", ",", key="target_delimiter")
+            else:
+                target_params = get_connection_inputs(target_type, "target")
 
-        return summary
-
-    def generate_profiling_reports(self, output_dir: str) -> Dict[str, str]:
-        """
-        Generate YData Profiling reports for source and target data.
-        
-        Args:
-            output_dir: Directory to save the reports
-            
-        Returns:
-            Dictionary containing paths to generated reports
-        """
+    # Load Data button
+    if st.button("Load Data"):
         try:
-            output_path = Path(output_dir)
-            output_path.mkdir(parents=True, exist_ok=True)
+            # Validate inputs before loading
+            if source_type in ['CSV file', 'DAT file', 'Parquet file', 'Flat files inside zipped folder']:
+                if 'source_file' not in st.session_state or st.session_state.source_file is None:
+                    st.error(f"Please upload a {source_type} for source data")
+                    return
+            else:
+                if not source_params or not source_params.get('server') or not source_params.get('database'):
+                    st.error("Please provide all required connection parameters for source")
+                    return
 
-            # Create copies of dataframes to avoid modifying originals
-            source_df = self.source_df.copy()
-            target_df = self.target_df.copy()
+            if target_type in ['CSV file', 'DAT file', 'Parquet file', 'Flat files inside zipped folder']:
+                if 'target_file' not in st.session_state or st.session_state.target_file is None:
+                    st.error(f"Please upload a {target_type} for target data")
+                    return
+            else:
+                if not target_params or not target_params.get('server') or not target_params.get('database'):
+                    st.error("Please provide all required connection parameters for target")
+                    return
 
-            # Convert problematic columns to string
-            for df in [source_df, target_df]:
-                for col in df.columns:
-                    # Check if column type is problematic
-                    col_type = str(df[col].dtype).lower()
-                    if ('object' in col_type or 
-                        'unsupported' in col_type or 
-                        col == 'ColumnNameID' or
-                        any(t in col_type for t in ['char', 'text'])):
-                        df[col] = df[col].fillna('').astype(str)
-
-            # Generate individual profiles with memory optimization
-            profile_kwargs = {
-                'progress_bar': False,
-                'explorative': True,
-                'minimal': True,  # Reduce memory usage
-                'pool_size': 1,   # Reduce parallel processing
-                'samples': None   # Disable sample generation
-            }
-
-            try:
-                source_profile = ProfileReport(
-                    source_df, 
-                    title="Source Data Profile",
-                    **profile_kwargs
-                )
-            except Exception as e:
-                logger.error(f"Error generating source profile: {str(e)}")
-                # Try with more aggressive memory optimization
-                source_profile = ProfileReport(
-                    source_df.astype(str),
-                    title="Source Data Profile",
-                    minimal=True,
-                    pool_size=1,
-                    samples=None,
-                    progress_bar=False
-                )
-
-            try:
-                target_profile = ProfileReport(
-                    target_df,
-                    title="Target Data Profile",
-                    **profile_kwargs
-                )
-            except Exception as e:
-                logger.error(f"Error generating target profile: {str(e)}")
-                # Try with more aggressive memory optimization
-                target_profile = ProfileReport(
-                    target_df.astype(str),
-                    title="Target Data Profile",
-                    minimal=True,
-                    pool_size=1,
-                    samples=None,
-                    progress_bar=False
-                )
-
-            # Save reports
-            source_path = output_path / "source_profile.html"
-            target_path = output_path / "target_profile.html"
-            comparison_path = output_path / "comparison_profile.html"
-
-            source_profile.to_file(str(source_path))
-            target_profile.to_file(str(target_path))
-            
-            # Generate comparison report with error handling
-            try:
-                comparison_report = source_profile.compare(target_profile)
-                comparison_report.to_file(str(comparison_path))
-            except Exception as e:
-                logger.error(f"Error generating comparison report: {str(e)}")
-                # Create a basic comparison report
-                with open(str(comparison_path), 'w') as f:
-                    f.write("""
-                    <html>
-                    <head><title>Data Comparison Report</title></head>
-                    <body>
-                        <h1>Data Comparison Report</h1>
-                        <p>Error generating detailed comparison report. Please check individual profiles.</p>
-                        <ul>
-                            <li><a href="source_profile.html">Source Profile</a></li>
-                            <li><a href="target_profile.html">Target Profile</a></li>
-                        </ul>
-                    </body>
-                    </html>
-                    """)
-
-            return {
-                'source_profile': str(source_path),
-                'target_profile': str(target_path),
-                'comparison_profile': str(comparison_path)
-            }
-            
-        except Exception as e:
-            logger.error(f"Error in generate_profiling_reports: {str(e)}")
-            raise
-
-    def get_distinct_values(self, columns: Optional[List[str]] = None) -> Dict[str, Dict[str, Any]]:
-        """
-        Get distinct values and their counts for specified columns.
-        
-        Args:
-            columns: List of columns to analyze. If None, analyze all non-numeric columns.
-            
-        Returns:
-            Dictionary containing distinct values and counts for each column
-        """
-        try:
-            source, target = self._prepare_dataframes()
-            
-            if not columns:
-                # Get all columns that exist in both dataframes
-                columns = [col for col in source.columns 
-                        if col in target.columns and not np.issubdtype(source[col].dtype, np.number)]
-            
-            if not columns:  # If still no columns, return empty dict
-                return {}
-
-            distinct_values = {}
-            for col in columns:
+            # Load source data
+            with st.spinner("Loading source data..."):
                 try:
-                    if col in source.columns and col in target.columns:
-                        source_distinct = source[col].value_counts().to_dict()
-                        target_distinct = target[col].value_counts().to_dict()
-                        
-                        distinct_values[col] = {
-                            'source_values': source_distinct,
-                            'target_values': target_distinct,
-                            'source_count': len(source_distinct),
-                            'target_count': len(target_distinct),
-                            'matching': set(source_distinct.keys()) == set(target_distinct.keys())
-                        }
+                    if source_type in ['CSV file', 'DAT file', 'Parquet file', 'Flat files inside zipped folder']:
+                        source_data = load_data(source_type, st.session_state.source_file,
+                                             delimiter=st.session_state.get('source_delimiter', ','))
+                    else:
+                        source_data = load_data(source_type, None, source_params)
+                    
+                    if source_data is None or source_data.empty:
+                        st.error("No data loaded from source. Please check your source configuration.")
+                        return
                 except Exception as e:
-                    logger.warning(f"Error processing column {col}: {str(e)}")
-                    continue
-
-            return distinct_values
+                    st.error(f"Error loading source data: {str(e)}")
+                    return
+                    
+            # Load target data
+            with st.spinner("Loading target data..."):
+                try:
+                    if target_type in ['CSV file', 'DAT file', 'Parquet file', 'Flat files inside zipped folder']:
+                        target_data = load_data(target_type, st.session_state.target_file,
+                                             delimiter=st.session_state.get('target_delimiter', ','))
+                    else:
+                        target_data = load_data(target_type, None, target_params)
+                    
+                    if target_data is None or target_data.empty:
+                        st.error("No data loaded from target. Please check your target configuration.")
+                        return
+                except Exception as e:
+                    st.error(f"Error loading target data: {str(e)}")
+                    return
+                    
+            # Store in session state
+            st.session_state.source_data = source_data
+            st.session_state.target_data = target_data
+            
+            # Show preview
+            st.subheader("Data Preview")
+            col1, col2 = st.columns(2)
+            with col1:
+                st.markdown("### Source Data")
+                st.dataframe(source_data.head(MAX_PREVIEW_ROWS))
+            with col2:
+                st.markdown("### Target Data")
+                st.dataframe(target_data.head(MAX_PREVIEW_ROWS))
+                
         except Exception as e:
-            logger.error(f"Error in get_distinct_values: {str(e)}")
-            return {}
+            st.error(f"Error loading data: {str(e)}")
+            return
+
+    # Column Mapping
+    if 'source_data' in st.session_state and 'target_data' in st.session_state:
+        st.subheader("2. Column Mapping")
+        
+        # Initialize comparison engine
+        engine = ComparisonEngine(st.session_state.source_data, st.session_state.target_data)
+        
+        # Get automatic mapping
+        if 'column_mapping' not in st.session_state:
+            st.session_state.column_mapping = engine.auto_map_columns()
+        
+        # Column Mapping Section
+        st.markdown("### Column Mapping Configuration")
+        
+        # Add buttons for quick mapping actions
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            if st.button("Auto-Map All"):
+                mapping_data = pd.DataFrame(engine.auto_map_columns())
+                st.session_state.column_mapping = mapping_data.to_dict('records')
+                st.success("Columns auto-mapped successfully!")
+                
+        with col2:
+            if st.button("Clear All Mappings"):
+                for mapping in st.session_state.column_mapping:
+                    mapping['target'] = ''
+                    mapping['join'] = False
+                    mapping['exclude'] = False
+                st.success("All mappings cleared!")
+                
+        with col3:
+            if st.button("Reset to Default"):
+                st.session_state.column_mapping = engine.auto_map_columns()
+                st.success("Mappings reset to default!")
+
+        # Create mapping editor with enhanced UI
+        st.markdown("#### Edit Column Mappings")
+        st.markdown("- Select target columns from dropdown")
+        st.markdown("- Check 'Join Column' for columns to use in matching records")
+        st.markdown("- Check 'Exclude' to ignore columns in comparison")
+        
+        mapping_data = pd.DataFrame(st.session_state.column_mapping)
+        edited_mapping = create_mapping_editor(mapping_data, st.session_state.target_data.columns)
+        
+        # Update session state with edited mapping
+        update_column_mapping(edited_mapping, engine)
+        
+        # Show mapping summary
+        st.markdown("#### Mapping Summary")
+        mapped_cols = sum(1 for m in st.session_state.column_mapping if m['target'])
+        join_cols = sum(1 for m in st.session_state.column_mapping if m['join'])
+        excluded_cols = sum(1 for m in st.session_state.column_mapping if m['exclude'])
+        
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Mapped Columns", f"{mapped_cols}/{len(st.session_state.column_mapping)}")
+        with col2:
+            st.metric("Join Columns", join_cols)
+        with col3:
+            st.metric("Excluded Columns", excluded_cols)
+        
+        # Get selected join columns
+        join_columns = [m['source'] for m in st.session_state.column_mapping if m['join']]
+        
+        if not join_columns:
+            st.warning("Please select at least one join column")
+        else:
+            # Compare button
+            if st.button("Compare"):
+                try:
+                    with st.spinner("Performing comparison..."):
+                        # Set mapping in comparison engine
+                        engine.set_mapping(st.session_state.column_mapping, join_columns)
+                        
+                        # Perform comparison
+                        comparison_results = engine.compare()
+                        
+                        # Generate reports
+                        report_gen = ReportGenerator("reports")
+                        
+                        # Generate and save reports
+                        report_paths = {}
+                        
+                        with st.spinner("Generating DataCompy report..."):
+                            # Save DataCompy report
+                            datacompy_path = report_gen.generate_datacompy_report(comparison_results)
+                            report_paths['datacompy'] = datacompy_path
+                            
+                        with st.spinner("Generating Y-DataProfiling report..."):
+                            # Generate profile reports
+                            profile_paths = engine.generate_profiling_reports("reports")
+                            report_paths.update(profile_paths)
+                        
+                        with st.spinner("Generating Regression report..."):
+                            # Enhanced Regression report with multiple checks
+                            report_paths['regression'] = report_gen.generate_regression_report(
+                                comparison_results,
+                                st.session_state.source_data,
+                                st.session_state.target_data
+                            )
+                        
+                        with st.spinner("Generating Side-by-side Difference report..."):
+                            # Enhanced difference report
+                            diff_report = report_gen.generate_difference_report(
+                                st.session_state.source_data,
+                                st.session_state.target_data,
+                                join_columns
+                            )
+                            if diff_report:
+                                report_paths['differences'] = diff_report
+                        
+                        with st.spinner("Creating report archive..."):
+                            # Create ZIP archive with all reports
+                            zip_path = report_gen.create_report_archive(report_paths)
+                        
+                        # Store results in session state
+                        st.session_state.comparison_results = comparison_results
+                        st.session_state.report_paths = report_paths
+                        st.session_state.zip_path = zip_path
+                        
+                        st.success("All reports generated successfully!")
+                        
+                except Exception as e:
+                    st.error(f"Comparison failed: {str(e)}")
+                    return
+
+    # Display Results
+    if st.session_state.comparison_results:
+        st.subheader("3. Comparison Results")
+        
+        # Summary statistics
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Rows Match", "Yes" if st.session_state.comparison_results['rows_match'] else "No")
+        with col2:
+            st.metric("Columns Match", "Yes" if st.session_state.comparison_results['columns_match'] else "No")
+        with col3:
+            st.metric("Overall Match", "Yes" if st.session_state.comparison_results['match_status'] else "No")
+        
+        # DataCompy Report
+        with st.expander("View DataCompy Report"):
+            st.text(st.session_state.comparison_results['datacompy_report'])
+        
+        # Download Reports Section
+        st.subheader("4. Download Reports")
+        
+        # Create tabs for different report categories
+        report_tabs = st.tabs([
+            "Analysis Reports", 
+            "Difference Reports", 
+            "Profile Reports",
+            "Download All"
+        ])
+        
+        with report_tabs[0]:
+            st.markdown("### Analysis Reports")
+            if 'regression' in st.session_state.report_paths:
+                with open(st.session_state.report_paths['regression'], 'rb') as f:
+                    st.download_button(
+                        "📊 Download Regression Report (Excel)",
+                        f,
+                        file_name=os.path.basename(st.session_state.report_paths['regression']),
+                        mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                        help="Contains Count Check, Aggregation Check, and Distinct Value Analysis"
+                    )
+            
+            # DataCompy Report
+            st.markdown("#### DataCompy Report")
+            st.text(st.session_state.comparison_results['datacompy_report'])
+            
+        with report_tabs[1]:
+            st.markdown("### Difference Reports")
+            if 'differences' in st.session_state.report_paths:
+                with open(st.session_state.report_paths['differences'], 'rb') as f:
+                    st.download_button(
+                        "📋 Download Side-by-Side Difference Report (Excel)",
+                        f,
+                        file_name=os.path.basename(st.session_state.report_paths['differences']),
+                        mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                        help="Shows source and target data side by side with highlighted differences"
+                    )
+            else:
+                st.info("No differences found between source and target datasets.")
+            
+        with report_tabs[2]:
+            st.markdown("### Profile Reports")
+            # Add custom CSS for profile container
+            st.markdown("""
+                <style>
+                    .profile-container {
+                        height: 600px;
+                        overflow-y: auto;
+                        border: 1px solid #e0e0e0;
+                        border-radius: 4px;
+                        padding: 10px;
+                        margin-top: 10px;
+                    }
+                </style>
+            """, unsafe_allow_html=True)
+            
+            # Display profile reports with tabs
+            if any(key.startswith('profile') for key in st.session_state.report_paths.keys()):
+                profile_tabs = st.tabs(["Source Profile", "Target Profile", "Comparison Profile"])
+                
+                with profile_tabs[0]:
+                    if 'source_profile' in st.session_state.report_paths:
+                        with open(st.session_state.report_paths['source_profile'], 'rb') as f:
+                            st.download_button(
+                                "📈 Download Source Profile",
+                                f,
+                                file_name=os.path.basename(st.session_state.report_paths['source_profile']),
+                                mime='text/html'
+                            )
+                        with open(st.session_state.report_paths['source_profile'], 'r') as f:
+                            st.components.v1.html(f.read(), height=600, scrolling=True)
+                
+                with profile_tabs[1]:
+                    if 'target_profile' in st.session_state.report_paths:
+                        with open(st.session_state.report_paths['target_profile'], 'rb') as f:
+                            st.download_button(
+                                "📈 Download Target Profile",
+                                f,
+                                file_name=os.path.basename(st.session_state.report_paths['target_profile']),
+                                mime='text/html'
+                            )
+                        with open(st.session_state.report_paths['target_profile'], 'r') as f:
+                            st.components.v1.html(f.read(), height=600, scrolling=True)
+                
+                with profile_tabs[2]:
+                    if 'comparison_profile' in st.session_state.report_paths:
+                        with open(st.session_state.report_paths['comparison_profile'], 'rb') as f:
+                            st.download_button(
+                                "📈 Download Comparison Profile",
+                                f,
+                                file_name=os.path.basename(st.session_state.report_paths['comparison_profile']),
+                                mime='text/html'
+                            )
+                        with open(st.session_state.report_paths['comparison_profile'], 'r') as f:
+                            st.components.v1.html(f.read(), height=600, scrolling=True)
+        
+        with report_tabs[3]:
+            st.markdown("### Download All Reports")
+            with open(st.session_state.zip_path, 'rb') as f:
+                st.download_button(
+                    "📦 Download All Reports (ZIP)",
+                    f,
+                    file_name=os.path.basename(st.session_state.zip_path),
+                    mime='application/zip',
+                    help="Contains all generated reports in a single ZIP file"
+                )
+            st.info("The ZIP archive contains all reports including regression analysis, differences, and data profiles.")
+
+if __name__ == "__main__":
+    main()
