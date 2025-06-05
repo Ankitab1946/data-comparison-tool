@@ -16,8 +16,36 @@ def update_column_mapping(edited_mapping, engine):
     """Helper function to safely update column mapping in session state."""
     if edited_mapping is not None:
         try:
-            st.session_state.column_mapping = edited_mapping.to_dict('records')
+            # Convert edited mapping to records and ensure proper types
+            mapping_records = []
+            for _, row in edited_mapping.iterrows():
+                mapping = row.to_dict()
+                
+                # Convert object types to string
+                if mapping['source_type'] == 'object':
+                    mapping['source_type'] = 'string'
+                if mapping['target_type'] == 'object':
+                    mapping['target_type'] = 'string'
+                
+                # Ensure join is boolean
+                mapping['join'] = bool(mapping['join'])
+                
+                # Update engine's type mapping
+                engine.update_column_types(
+                    mapping['source'],
+                    source_type=mapping['source_type'],
+                    target_type=mapping['target_type']
+                )
+                
+                mapping_records.append(mapping)
+            
+            # Store updated mapping in session state
+            st.session_state.column_mapping = mapping_records
+            
+            # Force rerun to update UI state
+            st.rerun()
             return True
+            
         except Exception as e:
             st.error(f"Error updating column mapping: {str(e)}")
             st.session_state.column_mapping = engine.auto_map_columns()
@@ -46,11 +74,29 @@ def create_mapping_editor(mapping_data, target_columns, key_suffix=""):
                 ),
                 "join": st.column_config.CheckboxColumn(
                     "Join Column",
-                    help="Use this column to match records between source and target"
+                    default=False,
+                    help="Use this column to match records between source and target",
+                    width="small"
+                ),
+                "source_type": st.column_config.SelectboxColumn(
+                    "Source Type",
+                    width="medium",
+                    options=sorted(list(set(TYPE_MAPPING.values()))),
+                    required=True,
+                    help="Data type for source column"
+                ),
+                "target_type": st.column_config.SelectboxColumn(
+                    "Target Type",
+                    width="medium",
+                    options=sorted(list(set(TYPE_MAPPING.values()))),
+                    required=True,
+                    help="Data type for target column"
                 ),
                 "data_type": st.column_config.SelectboxColumn(
-                    "Data Type",
-                    options=list(TYPE_MAPPING.values()),
+                    "Comparison Type",
+                    width="medium",
+                    options=sorted(list(set(TYPE_MAPPING.values()))),
+                    required=True,
                     help="Data type for comparison"
                 ),
                 "exclude": st.column_config.CheckboxColumn(
