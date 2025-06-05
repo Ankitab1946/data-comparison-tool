@@ -447,7 +447,7 @@ class ComparisonEngine:
                 source_count = source.shape[0]  # Faster than len()
                 target_count = target.shape[0]
                 
-                # Initialize results with proper structure
+                # Initialize results with proper structure and type conversion
                 results = {
                     'match_status': False,
                     'rows_match': False,
@@ -459,8 +459,8 @@ class ComparisonEngine:
                     'row_counts': {
                         'source_name': 'Source',
                         'target_name': 'Target',
-                        'source_count': source_count,
-                        'target_count': target_count
+                        'source_count': int(np.int64(source_count)),
+                        'target_count': int(np.int64(target_count))
                     },
                     'distinct_values': {}
                 }
@@ -477,17 +477,23 @@ class ComparisonEngine:
                 
             except Exception as e:
                 logger.error(f"Error initializing results: {str(e)}")
-                return {
+                # Initialize error results with proper type conversion
+                error_results = {
                     'match_status': False,
                     'error': str(e),
                     'datacompy_report': f"Error initializing comparison: {str(e)}",
                     'row_counts': {
                         'source_name': 'Source',
                         'target_name': 'Target',
-                        'source_count': 0,
-                        'target_count': 0
-                    }
+                        'source_count': int(np.int64(0)),
+                        'target_count': int(np.int64(0))
+                    },
+                    'column_summary': {},
+                    'distinct_values': {},
+                    'source_unmatched_rows': pd.DataFrame(),
+                    'target_unmatched_rows': pd.DataFrame()
                 }
+                return error_results
 
             # Get distinct values for non-numeric columns
             try:
@@ -651,13 +657,24 @@ class ComparisonEngine:
                 continue
             
             try:
-                # Initialize summary for this column
+                # Initialize summary for this column with np.int64
                 col_summary = {
-                    'source_null_count': 0,
-                    'target_null_count': 0,
-                    'source_unique_count': 0,
-                    'target_unique_count': 0
+                    'source_null_count': np.int64(0),
+                    'target_null_count': np.int64(0),
+                    'source_unique_count': np.int64(0),
+                    'target_unique_count': np.int64(0)
                 }
+                
+                # Initialize numeric statistics with np.float64
+                if np.issubdtype(source[col].dtype, np.number):
+                    col_summary.update({
+                        'source_sum': np.float64(0),
+                        'target_sum': np.float64(0),
+                        'source_mean': np.float64(0),
+                        'target_mean': np.float64(0),
+                        'source_std': np.float64(0),
+                        'target_std': np.float64(0)
+                    })
                 
                 # Process source data in chunks
                 unique_values_source = set()
@@ -713,8 +730,17 @@ class ComparisonEngine:
                     else:
                         unique_values_target.update(chunk[col].dropna().astype(str).tolist())
                 
-                col_summary['source_unique_count'] = len(unique_values_source)
-                col_summary['target_unique_count'] = len(unique_values_target)
+                # Convert counts to np.int64
+                col_summary['source_unique_count'] = np.int64(len(unique_values_source))
+                col_summary['target_unique_count'] = np.int64(len(unique_values_target))
+                
+                # Convert null counts to np.int64 if they aren't already
+                col_summary['source_null_count'] = np.int64(col_summary['source_null_count'])
+                col_summary['target_null_count'] = np.int64(col_summary['target_null_count'])
+                
+                # Convert all integer values to Python int for JSON serialization
+                for key in ['source_unique_count', 'target_unique_count', 'source_null_count', 'target_null_count']:
+                    col_summary[key] = int(col_summary[key])
                 
                 # For numeric columns, calculate statistics
                 if np.issubdtype(source[col].dtype, np.number):
@@ -758,12 +784,24 @@ class ComparisonEngine:
                 
             except Exception as e:
                 logger.warning(f"Error processing column {col}: {str(e)}")
+                # Initialize with proper numpy types even in error case
                 summary[col] = {
-                    'source_null_count': 0,
-                    'target_null_count': 0,
-                    'source_unique_count': 0,
-                    'target_unique_count': 0
+                    'source_null_count': int(np.int64(0)),
+                    'target_null_count': int(np.int64(0)),
+                    'source_unique_count': int(np.int64(0)),
+                    'target_unique_count': int(np.int64(0))
                 }
+                
+                # Add numeric stats with proper types if it's a numeric column
+                if np.issubdtype(source[col].dtype, np.number):
+                    summary[col].update({
+                        'source_sum': float(np.float64(0)),
+                        'target_sum': float(np.float64(0)),
+                        'source_mean': float(np.float64(0)),
+                        'target_mean': float(np.float64(0)),
+                        'source_std': float(np.float64(0)),
+                        'target_std': float(np.float64(0))
+                    })
         
         return summary
 
