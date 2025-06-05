@@ -16,39 +16,45 @@ def update_column_mapping(edited_mapping, engine):
     """Helper function to safely update column mapping in session state."""
     if edited_mapping is not None:
         try:
-            # Convert edited mapping to records and ensure proper types
+            # Convert edited mapping to records
             mapping_records = []
+            
+            # First pass: collect all mappings without updating engine
             for _, row in edited_mapping.iterrows():
                 mapping = row.to_dict()
                 
                 # Convert object types to string
-                if mapping['source_type'] == 'object':
+                if mapping.get('source_type') == 'object':
                     mapping['source_type'] = 'string'
-                if mapping['target_type'] == 'object':
+                if mapping.get('target_type') == 'object':
                     mapping['target_type'] = 'string'
                 
                 # Ensure join is boolean
-                mapping['join'] = bool(mapping['join'])
-                
-                # Update engine's type mapping
-                engine.update_column_types(
-                    mapping['source'],
-                    source_type=mapping['source_type'],
-                    target_type=mapping['target_type']
-                )
+                mapping['join'] = bool(mapping.get('join', False))
                 
                 mapping_records.append(mapping)
             
             # Store updated mapping in session state
             st.session_state.column_mapping = mapping_records
             
-            # Force rerun to update UI state
-            st.rerun()
+            # Second pass: update engine types after mapping is set
+            if hasattr(engine, 'mapping'):
+                for mapping in mapping_records:
+                    try:
+                        engine.update_column_types(
+                            mapping['source'],
+                            source_type=mapping.get('source_type'),
+                            target_type=mapping.get('target_type')
+                        )
+                    except Exception as type_error:
+                        logger.warning(f"Error updating types for column {mapping['source']}: {str(type_error)}")
+            
             return True
             
         except Exception as e:
             st.error(f"Error updating column mapping: {str(e)}")
-            st.session_state.column_mapping = engine.auto_map_columns()
+            if not hasattr(engine, 'mapping'):
+                st.session_state.column_mapping = engine.auto_map_columns()
             return False
     else:
         st.warning("No changes made to column mapping")
@@ -682,9 +688,13 @@ def main():
         # Initialize comparison engine
         engine = ComparisonEngine(st.session_state.source_data, st.session_state.target_data)
         
-        # Get automatic mapping
+        # Get automatic mapping or use existing mapping
         if 'column_mapping' not in st.session_state:
             st.session_state.column_mapping = engine.auto_map_columns()
+        
+        # Set the existing mapping in the engine
+        join_columns = [m['source'] for m in st.session_state.column_mapping if m['join']]
+        engine.set_mapping(st.session_state.column_mapping, join_columns)
         
         # Column Mapping Section
         st.markdown("### Column Mapping Configuration")
