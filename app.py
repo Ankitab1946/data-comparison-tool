@@ -1208,11 +1208,16 @@ def load_data(source_type: str, file_upload, connection_params: Dict[str, Any] =
     if source_type in ['CSV file', 'DAT file']:
         if file_upload is None:
             raise ValueError(f"Please upload a {source_type}")
+        
+        # Check if uploaded file has content
+        file_content = file_upload.getvalue()
+        if not file_content or len(file_content) == 0:
+            raise ValueError(f"The uploaded {source_type} file is empty")
             
         try:
             # Save uploaded file temporarily
             with tempfile.NamedTemporaryFile(delete=False, suffix=file_upload.name) as tmp_file:
-                tmp_file.write(file_upload.getvalue())
+                tmp_file.write(file_content)
                 
                 # Try reading with pandas directly first
                 try:
