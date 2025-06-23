@@ -930,6 +930,7 @@
 # if __name__ == "__main__":
 #     main()
 
+
 """Main Streamlit application for the Comparison Tool."""
 import streamlit as st
 import pandas as pd
@@ -1209,10 +1210,11 @@ def load_data(source_type: str, file_upload, connection_params: Dict[str, Any] =
         if file_upload is None:
             raise ValueError(f"Please upload a {source_type}")
         
-        # Check if uploaded file has content
-        file_content = file_upload.getvalue()
+        # Read uploaded file content and reset pointer
+        file_content = file_upload.read()
         if not file_content or len(file_content) == 0:
             raise ValueError(f"The uploaded {source_type} file is empty")
+        file_upload.seek(0)
             
         try:
             # Save uploaded file temporarily
