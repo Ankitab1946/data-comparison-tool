@@ -508,9 +508,9 @@ class ReportGenerator:
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             report_path = self.output_dir / f"DifferenceReport_{timestamp}.xlsx"
 
-            # Constants for Excel limitations and chunking
-            MAX_ROWS = 500000  # Half of Excel's limit for better performance
-            CHUNK_SIZE = 450000  # Slightly less than max for headers and formatting
+            # Constants for Excel limitations - reduced for better performance
+            MAX_ROWS = 100000  # Significantly reduced from Excel's limit for stability
+            CHUNK_SIZE = 90000  # Slightly less than max for headers and formatting
             
             # Process data in chunks to avoid memory issues
             dfs_to_process = []
@@ -627,74 +627,78 @@ class ReportGenerator:
             raise
 
     def generate_datacompy_report(self, comparison_results: Dict[str, Any]) -> str:
-        """Generate DataCompy report with chunking for large datasets."""
+        """Generate detailed DataCompy report with proper formatting."""
         try:
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             report_path = self.output_dir / f"DataCompy_{timestamp}.txt"
             
-            # Constants for chunking
-            CHUNK_SIZE = 100000  # Process 100k rows at a time
-            MAX_SAMPLE_ROWS = 5  # Maximum number of sample rows to show
-            
-            with open(report_path, 'w') as f:
-                # Write header
+            with open(report_path, 'w', encoding='utf-8') as f:
+                # Write header with timestamp
+                f.write("=" * 80 + "\n")
                 f.write("DataCompy Comparison Report\n")
-                f.write("=" * 50 + "\n\n")
-                
+                f.write(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                f.write("=" * 80 + "\n\n")
+
                 # Write summary section
-                f.write("Summary:\n")
-                f.write("-" * 20 + "\n")
-                f.write(f"Source rows: {comparison_results['row_counts']['source_count']}\n")
-                f.write(f"Target rows: {comparison_results['row_counts']['target_count']}\n")
+                f.write("SUMMARY\n")
+                f.write("-" * 80 + "\n")
+                f.write(f"Source Rows: {comparison_results.get('row_counts', {}).get('source_count', 'N/A')}\n")
+                f.write(f"Target Rows: {comparison_results.get('row_counts', {}).get('target_count', 'N/A')}\n")
                 
-                # Write column analysis
-                f.write("\nColumn Analysis:\n")
-                f.write("-" * 20 + "\n")
-                for col, summary in comparison_results['column_summary'].items():
+                # Write column details
+                f.write("\nCOLUMN ANALYSIS\n")
+                f.write("-" * 80 + "\n")
+                for col, details in comparison_results.get('column_summary', {}).items():
                     f.write(f"\nColumn: {col}\n")
-                    f.write(f"Source null count: {summary['source_null_count']}\n")
-                    f.write(f"Target null count: {summary['target_null_count']}\n")
-                    f.write(f"Source unique count: {summary['source_unique_count']}\n")
-                    f.write(f"Target unique count: {summary['target_unique_count']}\n")
-                    if 'source_sum' in summary:
-                        f.write(f"Source sum: {summary['source_sum']}\n")
-                        f.write(f"Target sum: {summary['target_sum']}\n")
-                        f.write(f"Source mean: {summary['source_mean']}\n")
-                        f.write(f"Target mean: {summary['target_mean']}\n")
-                
-                # Write unmatched rows in chunks
-                if len(comparison_results['source_unmatched_rows']) > 0:
-                    f.write("\nUnmatched Rows in Source:\n")
-                    f.write("-" * 20 + "\n")
+                    f.write("  Source:\n")
+                    f.write(f"    Null Count: {details.get('source_null_count', 'N/A')}\n")
+                    f.write(f"    Unique Values: {details.get('source_unique_count', 'N/A')}\n")
+                    if 'source_mean' in details:
+                        f.write(f"    Mean: {details['source_mean']}\n")
+                        f.write(f"    Sum: {details.get('source_sum', 'N/A')}\n")
                     
-                    # Process source unmatched rows in chunks
-                    source_unmatched = comparison_results['source_unmatched_rows']
-                    for start_idx in range(0, len(source_unmatched), CHUNK_SIZE):
-                        chunk = source_unmatched.iloc[start_idx:start_idx + CHUNK_SIZE]
-                        if start_idx == 0:  # Only show sample from first chunk
-                            sample = chunk.head(MAX_SAMPLE_ROWS).to_string()
-                            f.write(f"Sample rows (showing {MAX_SAMPLE_ROWS} of {len(source_unmatched)}):\n")
-                            f.write(sample + "\n")
+                    f.write("  Target:\n")
+                    f.write(f"    Null Count: {details.get('target_null_count', 'N/A')}\n")
+                    f.write(f"    Unique Values: {details.get('target_unique_count', 'N/A')}\n")
+                    if 'target_mean' in details:
+                        f.write(f"    Mean: {details['target_mean']}\n")
+                        f.write(f"    Sum: {details.get('target_sum', 'N/A')}\n")
+                    f.write("\n")
                 
-                if len(comparison_results['target_unmatched_rows']) > 0:
-                    f.write("\nUnmatched Rows in Target:\n")
-                    f.write("-" * 20 + "\n")
-                    
-                    # Process target unmatched rows in chunks
-                    target_unmatched = comparison_results['target_unmatched_rows']
-                    for start_idx in range(0, len(target_unmatched), CHUNK_SIZE):
-                        chunk = target_unmatched.iloc[start_idx:start_idx + CHUNK_SIZE]
-                        if start_idx == 0:  # Only show sample from first chunk
-                            sample = chunk.head(MAX_SAMPLE_ROWS).to_string()
-                            f.write(f"Sample rows (showing {MAX_SAMPLE_ROWS} of {len(target_unmatched)}):\n")
-                            f.write(sample + "\n")
+                # Write unmatched rows summary
+                f.write("\nUNMATCHED ROWS SUMMARY\n")
+                f.write("-" * 80 + "\n")
                 
-                # Write overall status
-                f.write("\nOverall Status:\n")
-                f.write("-" * 20 + "\n")
-                f.write(f"Rows match: {'Yes' if comparison_results['rows_match'] else 'No'}\n")
-                f.write(f"Columns match: {'Yes' if comparison_results['columns_match'] else 'No'}\n")
-                f.write(f"Data matches: {'Yes' if comparison_results['match_status'] else 'No'}\n")
+                source_unmatched = comparison_results.get('source_unmatched_rows', pd.DataFrame())
+                target_unmatched = comparison_results.get('target_unmatched_rows', pd.DataFrame())
+                
+                f.write(f"Source Unmatched Count: {len(source_unmatched)}\n")
+                f.write(f"Target Unmatched Count: {len(target_unmatched)}\n\n")
+
+                if not source_unmatched.empty:
+                    f.write("Sample of Source Unmatched Rows (first 5):\n")
+                    f.write("-" * 40 + "\n")
+                    sample = source_unmatched.head(5).to_string()
+                    f.write(sample + "\n\n")
+
+                if not target_unmatched.empty:
+                    f.write("Sample of Target Unmatched Rows (first 5):\n")
+                    f.write("-" * 40 + "\n")
+                    sample = target_unmatched.head(5).to_string()
+                    f.write(sample + "\n\n")
+
+                # Write match status summary
+                f.write("\nMATCH STATUS SUMMARY\n")
+                f.write("-" * 80 + "\n")
+                f.write(f"Rows Match: {'Yes' if comparison_results.get('rows_match', False) else 'No'}\n")
+                f.write(f"Columns Match: {'Yes' if comparison_results.get('columns_match', False) else 'No'}\n")
+                f.write(f"Data Matches: {'Yes' if comparison_results.get('match_status', False) else 'No'}\n")
+
+                # Write any additional details from datacompy
+                if 'datacompy_report' in comparison_results:
+                    f.write("\nDETAILED COMPARISON\n")
+                    f.write("-" * 80 + "\n")
+                    f.write(comparison_results['datacompy_report'])
             
             logger.info(f"DataCompy report generated: {report_path}")
             return str(report_path)
@@ -709,9 +713,47 @@ class ReportGenerator:
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             report_path = self.output_dir / f"YDataProfile_{timestamp}.html"
             
-            # Save the Y-Data Profile HTML report
-            with open(report_path, 'w') as f:
-                f.write(comparison_results.get('ydata_report', '<h1>No Y-Data Profile report available</h1>'))
+            # Create resources directory
+            resources_dir = self.output_dir / 'resources'
+            resources_dir.mkdir(exist_ok=True)
+            
+            # Save the Y-Data Profile HTML report with proper encoding and structure
+            with open(report_path, 'w', encoding='utf-8') as f:
+                html_content = comparison_results.get('ydata_report', '')
+                if not html_content:
+                    html_content = '''
+                    <!DOCTYPE html>
+                    <html>
+                    <head>
+                        <meta charset="utf-8">
+                        <title>Y-Data Profile Report</title>
+                        <style>
+                            body { font-family: Arial, sans-serif; margin: 2em; }
+                            h1 { color: #333; }
+                        </style>
+                    </head>
+                    <body>
+                        <h1>No Y-Data Profile report available</h1>
+                    </body>
+                    </html>
+                    '''
+                
+                # Ensure HTML has proper structure
+                if '<!DOCTYPE html>' not in html_content:
+                    html_content = f'''
+                    <!DOCTYPE html>
+                    <html>
+                    <head>
+                        <meta charset="utf-8">
+                        <title>Y-Data Profile Report</title>
+                    </head>
+                    <body>
+                        {html_content}
+                    </body>
+                    </html>
+                    '''
+                
+                f.write(html_content)
             
             logger.info(f"Y-Data Profile report generated: {report_path}")
             return str(report_path)
