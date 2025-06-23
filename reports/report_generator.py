@@ -389,12 +389,12 @@ class ReportGenerator:
             with pd.ExcelWriter(str(report_path), engine='openpyxl') as writer:
                 # 1. Count Check Tab
                 count_data = {
-                'Metric': ['Source Count', 'Target Count'],
-                'Value': [len(source_df), len(target_df)],
-                'Result': ['PASS', 'PASS' if len(source_df) == len(target_df) else 'FAIL']
-            }
-            count_df = pd.DataFrame(count_data)
-            count_df.to_excel(writer, sheet_name='CountCheck', index=False)
+                    'Metric': ['Source Count', 'Target Count'],
+                    'Value': [len(source_df), len(target_df)],
+                    'Result': ['PASS', 'PASS' if len(source_df) == len(target_df) else 'FAIL']
+                }
+                count_df = pd.DataFrame(count_data)
+                count_df.to_excel(writer, sheet_name='CountCheck', index=False)
                 
                 # Apply conditional formatting
                 count_sheet = writer.sheets['CountCheck']
