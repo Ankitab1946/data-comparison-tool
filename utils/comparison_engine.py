@@ -1950,7 +1950,20 @@ class ComparisonEngine:
 
                 # Convert types with memory optimization
                 try:
-                    if mapped_type == 'string' or 'char' in str(source[source_col].dtype).lower():
+                    # Special handling for Feed ID column - convert blank to NULL
+                    if source_col == 'Feed_ID':
+                        source[source_col] = source[source_col].replace(r'^\s*$', np.nan, regex=True)
+                        target[source_col] = target[source_col].replace(r'^\s*$', np.nan, regex=True)
+                        source[source_col] = source[source_col].fillna('NULL').astype('string')
+                        target[source_col] = target[source_col].fillna('NULL').astype('string')
+                    # Handle date columns - standardize format
+                    elif mapped_type == 'datetime64[ns]':
+                        source[source_col] = pd.to_datetime(source[source_col], errors='coerce', format='mixed')
+                        target[source_col] = pd.to_datetime(target[source_col], errors='coerce', format='mixed')
+                        # Convert to consistent format
+                        source[source_col] = source[source_col].dt.strftime('%Y-%m-%d %H:%M:%S')
+                        target[source_col] = target[source_col].dt.strftime('%Y-%m-%d %H:%M:%S')
+                    elif mapped_type == 'string' or 'char' in str(source[source_col].dtype).lower():
                         source[source_col] = source[source_col].fillna('').astype('string')  # Use pandas string type
                         target[source_col] = target[source_col].fillna('').astype('string')
                     elif mapped_type in ['int32', 'int64']:
