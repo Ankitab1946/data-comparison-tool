@@ -20,6 +20,10 @@ def update_column_mapping(edited_mapping, engine):
             # Convert edited mapping to records
             mapping_records = edited_mapping.to_dict('records')
             
+            # Set mapping in engine first (assuming engine has set_mapping method)
+            join_columns = [m['source'] for m in mapping_records if m.get('join', False)]
+            engine.set_mapping(mapping_records, join_columns)
+            
             # Update types in the engine for each column
             for mapping in mapping_records:
                 if mapping['source_type'] == 'object':
@@ -51,6 +55,15 @@ def update_column_mapping(edited_mapping, engine):
 def create_mapping_editor(mapping_data, target_columns, key_suffix=""):
     """Create a data editor for column mapping with error handling."""
     try:
+        # Automatically detect data types for source and target columns if not set
+        for row in mapping_data.itertuples():
+            if pd.isna(row.source_type) or row.source_type == '':
+                mapping_data.at[row.Index, 'source_type'] = TYPE_MAPPING.get(str(row.source_type).lower(), 'string')
+            if pd.isna(row.target_type) or row.target_type == '':
+                mapping_data.at[row.Index, 'target_type'] = TYPE_MAPPING.get(str(row.target_type).lower(), 'string')
+            if pd.isna(row.data_type) or row.data_type == '':
+                mapping_data.at[row.Index, 'data_type'] = TYPE_MAPPING.get(str(row.data_type).lower(), 'string')
+
         edited_mapping = st.data_editor(
             mapping_data,
             column_config={
@@ -732,7 +745,8 @@ def main():
         edited_mapping = create_mapping_editor(mapping_data, st.session_state.target_data.columns)
         
         # Update session state with edited mapping
-        update_column_mapping(edited_mapping, engine)
+        if edited_mapping is not None:
+            update_column_mapping(edited_mapping, engine)
         
         # Show mapping summary
         st.markdown("#### Mapping Summary")
