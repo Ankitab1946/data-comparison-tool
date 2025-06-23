@@ -708,50 +708,127 @@ class ReportGenerator:
             raise
 
     def generate_ydata_report(self, comparison_results: Dict[str, Any]) -> str:
-        """Generate Y-Data Profiling report."""
+        """Generate Y-Data Profiling comparison report."""
         try:
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            report_path = self.output_dir / f"YDataProfile_{timestamp}.html"
+            report_path = self.output_dir / f"Comparison_profile_{timestamp}.html"
             
             # Create resources directory
             resources_dir = self.output_dir / 'resources'
             resources_dir.mkdir(exist_ok=True)
             
-            # Save the Y-Data Profile HTML report with proper encoding and structure
+            # Get profile data
+            source_profile = comparison_results.get('source_profile', {})
+            target_profile = comparison_results.get('target_profile', {})
+            
+            # Generate comparison HTML
             with open(report_path, 'w', encoding='utf-8') as f:
-                html_content = comparison_results.get('ydata_report', '')
-                if not html_content:
-                    html_content = '''
-                    <!DOCTYPE html>
-                    <html>
-                    <head>
-                        <meta charset="utf-8">
-                        <title>Y-Data Profile Report</title>
-                        <style>
-                            body { font-family: Arial, sans-serif; margin: 2em; }
-                            h1 { color: #333; }
-                        </style>
-                    </head>
-                    <body>
-                        <h1>No Y-Data Profile report available</h1>
-                    </body>
-                    </html>
+                html_content = '''
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <meta charset="utf-8">
+                    <title>Data Profile Comparison Report</title>
+                    <style>
+                        body { font-family: Arial, sans-serif; margin: 2em; line-height: 1.6; }
+                        h1, h2 { color: #333; }
+                        .container { max-width: 1200px; margin: 0 auto; }
+                        .section { margin-bottom: 2em; padding: 1em; border: 1px solid #ddd; border-radius: 4px; }
+                        .diff { background-color: #fff3cd; padding: 0.5em; }
+                        table { width: 100%; border-collapse: collapse; margin: 1em 0; }
+                        th, td { padding: 8px; text-align: left; border-bottom: 1px solid #ddd; }
+                        th { background-color: #f5f5f5; }
+                        .highlight { background-color: #ffe3e3; }
+                    </style>
+                </head>
+                <body>
+                    <div class="container">
+                        <h1>Data Profile Comparison Report</h1>
+                '''
+                
+                # Add timestamp
+                html_content += f'<p>Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</p>'
+                
+                # Basic Statistics Section
+                html_content += '''
+                    <div class="section">
+                        <h2>Basic Statistics</h2>
+                        <table>
+                            <tr>
+                                <th>Metric</th>
+                                <th>Source</th>
+                                <th>Target</th>
+                                <th>Difference</th>
+                            </tr>
+                '''
+                
+                # Add basic statistics comparison
+                metrics = ['row_count', 'column_count', 'duplicate_rows', 'missing_cells']
+                for metric in metrics:
+                    source_val = source_profile.get(metric, 'N/A')
+                    target_val = target_profile.get(metric, 'N/A')
+                    diff = ''
+                    if isinstance(source_val, (int, float)) and isinstance(target_val, (int, float)):
+                        diff = target_val - source_val
+                    
+                    html_content += f'''
+                        <tr>
+                            <td>{metric.replace('_', ' ').title()}</td>
+                            <td>{source_val}</td>
+                            <td>{target_val}</td>
+                            <td>{diff if diff != '' else 'N/A'}</td>
+                        </tr>
                     '''
                 
-                # Ensure HTML has proper structure
-                if '<!DOCTYPE html>' not in html_content:
-                    html_content = f'''
-                    <!DOCTYPE html>
-                    <html>
-                    <head>
-                        <meta charset="utf-8">
-                        <title>Y-Data Profile Report</title>
-                    </head>
-                    <body>
-                        {html_content}
-                    </body>
-                    </html>
+                html_content += '</table></div>'
+                
+                # Column Analysis Section
+                html_content += '''
+                    <div class="section">
+                        <h2>Column Analysis</h2>
+                '''
+                
+                # Get all columns from both profiles
+                all_columns = set(source_profile.get('columns', {}).keys()) | set(target_profile.get('columns', {}).keys())
+                
+                for column in sorted(all_columns):
+                    source_col = source_profile.get('columns', {}).get(column, {})
+                    target_col = target_profile.get('columns', {}).get(column, {})
+                    
+                    html_content += f'''
+                        <div class="section">
+                            <h3>Column: {column}</h3>
+                            <table>
+                                <tr>
+                                    <th>Metric</th>
+                                    <th>Source</th>
+                                    <th>Target</th>
+                                </tr>
                     '''
+                    
+                    # Compare column metrics
+                    col_metrics = ['type', 'unique_count', 'missing_count', 'min', 'max', 'mean', 'std']
+                    for metric in col_metrics:
+                        source_val = source_col.get(metric, 'N/A')
+                        target_val = target_col.get(metric, 'N/A')
+                        highlight = ' class="highlight"' if source_val != target_val else ''
+                        
+                        html_content += f'''
+                            <tr{highlight}>
+                                <td>{metric.replace('_', ' ').title()}</td>
+                                <td>{source_val}</td>
+                                <td>{target_val}</td>
+                            </tr>
+                        '''
+                    
+                    html_content += '</table></div>'
+                
+                # Close main container and body
+                html_content += '''
+                    </div>
+                </body>
+                </html>
+                '''
                 
                 f.write(html_content)
             
