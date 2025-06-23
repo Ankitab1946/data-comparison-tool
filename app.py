@@ -751,7 +751,7 @@ def main():
         # Get selected join columns
         join_columns = [m['source'] for m in st.session_state.column_mapping if m['join']]
         
-        if not join_columns:
+        if len(join_columns) == 0:
             st.warning("Please select at least one join column")
         else:
             # Compare button
@@ -812,6 +812,7 @@ def main():
                 except Exception as e:
                     st.error(f"Comparison failed: {str(e)}")
                     return
+
 
     # Display Results
     if st.session_state.comparison_results:
