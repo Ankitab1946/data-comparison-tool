@@ -2499,24 +2499,70 @@ class ComparisonEngine:
             source_profile.to_file(str(source_path))
             target_profile.to_file(str(target_path))
             
-            # Generate comparison report with error handling
+            # Generate comparison report with enhanced error handling and memory optimization
             try:
-                comparison_report = source_profile.compare(target_profile)
+                logger.info("Generating comparison report...")
+                
+                # Clear any existing report at the path
+                if comparison_path.exists():
+                    comparison_path.unlink()
+                
+                # Generate comparison with optimized settings
+                comparison_report = ProfileReport.compare(
+                    [source_profile, target_profile],
+                    title="Data Profile Comparison Report",
+                    progress_bar=False,
+                    minimal=True,
+                    explorative=True,
+                    pool_size=1
+                )
+                
+                # Save comparison report
+                logger.info("Saving comparison report...")
                 comparison_report.to_file(str(comparison_path))
+                logger.info("Comparison report saved successfully")
+                
             except Exception as e:
                 logger.error(f"Error generating comparison report: {str(e)}")
-                # Create a basic comparison report
-                with open(str(comparison_path), 'w') as f:
-                    f.write("""
+                # Create a more detailed error report
+                with open(str(comparison_path), 'w', encoding='utf-8') as f:
+                    f.write(f"""
+                    <!DOCTYPE html>
                     <html>
-                    <head><title>Data Comparison Report</title></head>
+                    <head>
+                        <meta charset="utf-8">
+                        <title>Data Profile Comparison Report</title>
+                        <style>
+                            body {{ font-family: Arial, sans-serif; margin: 2em; line-height: 1.6; }}
+                            h1, h2 {{ color: #333; }}
+                            .error {{ color: #721c24; background-color: #f8d7da; padding: 1em; border-radius: 4px; }}
+                            .links {{ margin-top: 2em; }}
+                            .links a {{ color: #007bff; text-decoration: none; }}
+                            .links a:hover {{ text-decoration: underline; }}
+                        </style>
+                    </head>
                     <body>
-                        <h1>Data Comparison Report</h1>
-                        <p>Error generating detailed comparison report. Please check individual profiles.</p>
-                        <ul>
-                            <li><a href="source_profile.html">Source Profile</a></li>
-                            <li><a href="target_profile.html">Target Profile</a></li>
-                        </ul>
+                        <h1>Data Profile Comparison Report</h1>
+                        <div class="error">
+                            <h2>Error Generating Detailed Comparison</h2>
+                            <p>An error occurred while generating the comparison report: {str(e)}</p>
+                        </div>
+                        <div class="links">
+                            <h2>Individual Profile Reports</h2>
+                            <p>Please check the individual profile reports for detailed analysis:</p>
+                            <ul>
+                                <li><a href="source_profile.html">Source Data Profile</a></li>
+                                <li><a href="target_profile.html">Target Data Profile</a></li>
+                            </ul>
+                        </div>
+                        <div>
+                            <h2>Troubleshooting Steps</h2>
+                            <ul>
+                                <li>Check if both source and target profiles were generated successfully</li>
+                                <li>Verify that the data types are compatible between source and target</li>
+                                <li>Consider reducing the dataset size if memory issues occur</li>
+                            </ul>
+                        </div>
                     </body>
                     </html>
                     """)
