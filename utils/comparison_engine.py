@@ -1697,6 +1697,7 @@ class ComparisonEngine:
     def auto_map_columns(self) -> List[Dict[str, Any]]:
         """
         Automatically map columns between source and target based on names and data types.
+        Includes unmapped source and target columns with blank mappings.
         
         Returns:
             List of dictionaries containing column mappings
@@ -1705,6 +1706,9 @@ class ComparisonEngine:
         target_cols = list(self.target_df.columns)
         mapping = []
 
+        mapped_targets = set()
+
+        # Map source columns to target columns
         for s_col in source_cols:
             # Try exact match first
             t_col = s_col if s_col in target_cols else None
@@ -1719,6 +1723,9 @@ class ComparisonEngine:
                 s_clean = ''.join(e.lower() for e in s_col if e.isalnum())
                 t_col = next((col for col in target_cols 
                             if ''.join(e.lower() for e in col if e.isalnum()) == s_clean), None)
+
+            if t_col:
+                mapped_targets.add(t_col)
 
             # Get source and target types
             source_type = str(self.source_df[s_col].dtype)
@@ -1789,6 +1796,23 @@ class ComparisonEngine:
                     logger.warning(f"Converting {s_col} to string due to high cardinality")
             
             mapping.append(mapping_entry)
+
+        # Add unmapped target columns with blank source
+        for t_col in target_cols:
+            if t_col not in mapped_targets:
+                mapping_entry = {
+                    'source': '',
+                    'target': t_col,
+                    'join': False,
+                    'data_type': 'string',
+                    'exclude': False,
+                    'source_type': '',
+                    'target_type': str(self.target_df[t_col].dtype),
+                    'editable': True,
+                    'original_source_type': '',
+                    'original_target_type': str(self.target_df[t_col].dtype)
+                }
+                mapping.append(mapping_entry)
 
         return mapping
 
