@@ -1970,12 +1970,25 @@ class ComparisonEngine:
                     elif mapped_type == 'string' or 'char' in str(source[source_col].dtype).lower():
                         source[source_col] = source[source_col].fillna('').astype('string')  # Use pandas string type
                         target[source_col] = target[source_col].fillna('').astype('string')
-                    elif mapped_type in ['int32', 'int64']:
-                        # Always use int64 for integer columns to avoid dtype mismatches
+                    elif mapped_type in ['int32', 'int64'] or source_col in ['ColumnSDID', 'ClientID']:  # Special handling for ID columns
                         try:
-                            # First convert to float to handle NaN values
-                            source[source_col] = pd.to_numeric(source[source_col], errors='coerce')
-                            target[source_col] = pd.to_numeric(target[source_col], errors='coerce')
+                            # For ID columns, first convert to string and clean
+                            if source_col in ['ColumnSDID', 'ClientID']:
+                                # Remove any decimal points and zeros after decimal
+                                source[source_col] = source[source_col].astype(str).replace(r'\.0$', '', regex=True)
+                                target[source_col] = target[source_col].astype(str).replace(r'\.0$', '', regex=True)
+                                
+                                # Convert empty or NaN to empty string
+                                source[source_col] = source[source_col].replace(['nan', 'None', ''], '')
+                                target[source_col] = target[source_col].replace(['nan', 'None', ''], '')
+                                
+                                # Convert back to numeric, treating empty string as NaN
+                                source[source_col] = pd.to_numeric(source[source_col], errors='coerce')
+                                target[source_col] = pd.to_numeric(target[source_col], errors='coerce')
+                            else:
+                                # For other integer columns, use standard conversion
+                                source[source_col] = pd.to_numeric(source[source_col], errors='coerce')
+                                target[source_col] = pd.to_numeric(target[source_col], errors='coerce')
                             
                             # Check cardinality
                             unique_count = min(
@@ -1988,9 +2001,9 @@ class ComparisonEngine:
                                 target[source_col] = target[source_col].fillna('').astype('string')
                                 logger.warning(f"Converting {source_col} to string due to high cardinality")
                             else:
-                                # Fill NaN with 0 and convert to int64
-                                source[source_col] = source[source_col].fillna(0).astype(np.int64)
-                                target[source_col] = target[source_col].fillna(0).astype(np.int64)
+                                # Convert to integer, preserving NaN values
+                                source[source_col] = source[source_col].astype(pd.Int64Dtype())
+                                target[source_col] = target[source_col].astype(pd.Int64Dtype())
                         except Exception as e:
                             logger.warning(f"Integer conversion failed for {source_col}: {str(e)}. Converting to string.")
                             source[source_col] = source[source_col].fillna('').astype('string')
