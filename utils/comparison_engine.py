@@ -1713,16 +1713,35 @@ class ComparisonEngine:
             # Try exact match first
             t_col = s_col if s_col in target_cols else None
             
-            # If no exact match, try case-insensitive match
-            if not t_col:
-                t_col = next((col for col in target_cols 
-                            if col.lower() == s_col.lower()), None)
-            
-            # If still no match, try removing special characters
-            if not t_col:
-                s_clean = ''.join(e.lower() for e in s_col if e.isalnum())
-                t_col = next((col for col in target_cols 
-                            if ''.join(e.lower() for e in col if e.isalnum()) == s_clean), None)
+            # Try case-insensitive and fuzzy matching for ID columns
+            if 'id' in s_col.lower():
+                # For ID columns, try more aggressive matching
+                if not t_col:
+                    # Try exact case-insensitive match
+                    t_col = next((col for col in target_cols 
+                                if col.lower() == s_col.lower()), None)
+                
+                if not t_col:
+                    # Try matching by removing 'sd' prefix and comparing
+                    s_clean = s_col.lower().replace('sd', '')
+                    t_col = next((col for col in target_cols 
+                                if col.lower().replace('sd', '') == s_clean), None)
+                
+                if not t_col:
+                    # Try matching by removing all non-alphanumeric chars
+                    s_clean = ''.join(e.lower() for e in s_col if e.isalnum())
+                    t_col = next((col for col in target_cols 
+                                if ''.join(e.lower() for e in col if e.isalnum()) == s_clean), None)
+            else:
+                # For non-ID columns, use standard matching
+                if not t_col:
+                    t_col = next((col for col in target_cols 
+                                if col.lower() == s_col.lower()), None)
+                
+                if not t_col:
+                    s_clean = ''.join(e.lower() for e in s_col if e.isalnum())
+                    t_col = next((col for col in target_cols 
+                                if ''.join(e.lower() for e in col if e.isalnum()) == s_clean), None)
 
             if t_col:
                 mapped_targets.add(t_col)
@@ -1749,24 +1768,31 @@ class ComparisonEngine:
             original_source_type = source_type
             original_target_type = target_type
             
-            # Determine final type
-            if source_mapped == target_mapped:
-                mapped_type = source_mapped
+            # Special handling for ID columns
+            if 'id' in s_col.lower():
+                # Always use string type for ID columns
+                mapped_type = 'string'
+                original_source_type = 'string'
+                original_target_type = 'string'
             else:
-                # For mismatched types, prefer string for text-like columns
-                if any(t in str(source_type).lower() or t in str(target_type).lower() 
-                      for t in ['char', 'text', 'string', 'object']):
-                    mapped_type = 'string'
-                    original_source_type = 'string'
-                    original_target_type = 'string'
+                # For non-ID columns, use standard type mapping
+                if source_mapped == target_mapped:
+                    mapped_type = source_mapped
                 else:
-                    # For numeric types, use the wider type
-                    if all(t in ['int32', 'int64', 'float32', 'float64'] for t in [source_mapped, target_mapped]):
-                        mapped_type = 'float64'  # widest numeric type
-                    else:
-                        mapped_type = 'string'  # fallback for incompatible types
+                    # For mismatched types, prefer string for text-like columns
+                    if any(t in str(source_type).lower() or t in str(target_type).lower() 
+                          for t in ['char', 'text', 'string', 'object']):
+                        mapped_type = 'string'
                         original_source_type = 'string'
                         original_target_type = 'string'
+                    else:
+                        # For numeric types, use the wider type
+                        if all(t in ['int32', 'int64', 'float32', 'float64'] for t in [source_mapped, target_mapped]):
+                            mapped_type = 'float64'  # widest numeric type
+                        else:
+                            mapped_type = 'string'  # fallback for incompatible types
+                            original_source_type = 'string'
+                            original_target_type = 'string'
 
             # Create mapping with editable types
             mapping_entry = {
