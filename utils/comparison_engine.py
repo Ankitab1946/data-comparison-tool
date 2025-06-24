@@ -1713,35 +1713,22 @@ class ComparisonEngine:
             # Try exact match first
             t_col = s_col if s_col in target_cols else None
             
-            # Try case-insensitive and fuzzy matching for ID columns
-            if 'id' in s_col.lower():
-                # For ID columns, try more aggressive matching
-                if not t_col:
-                    # Try exact case-insensitive match
+            # If no exact match, try case-insensitive match
+            if not t_col:
+                # Special handling for SDID/SDSID columns
+                if 'sdid' in s_col.lower():
+                    t_col = next((col for col in target_cols 
+                                if col.lower() == s_col.lower() or
+                                col.lower() == s_col.lower().replace('sdid', 'sdsid')), None)
+                else:
                     t_col = next((col for col in target_cols 
                                 if col.lower() == s_col.lower()), None)
-                
-                if not t_col:
-                    # Try matching by removing 'sd' prefix and comparing
-                    s_clean = s_col.lower().replace('sd', '')
-                    t_col = next((col for col in target_cols 
-                                if col.lower().replace('sd', '') == s_clean), None)
-                
-                if not t_col:
-                    # Try matching by removing all non-alphanumeric chars
-                    s_clean = ''.join(e.lower() for e in s_col if e.isalnum())
-                    t_col = next((col for col in target_cols 
-                                if ''.join(e.lower() for e in col if e.isalnum()) == s_clean), None)
-            else:
-                # For non-ID columns, use standard matching
-                if not t_col:
-                    t_col = next((col for col in target_cols 
-                                if col.lower() == s_col.lower()), None)
-                
-                if not t_col:
-                    s_clean = ''.join(e.lower() for e in s_col if e.isalnum())
-                    t_col = next((col for col in target_cols 
-                                if ''.join(e.lower() for e in col if e.isalnum()) == s_clean), None)
+            
+            # If still no match, try removing special characters
+            if not t_col:
+                s_clean = ''.join(e.lower() for e in s_col if e.isalnum())
+                t_col = next((col for col in target_cols 
+                            if ''.join(e.lower() for e in col if e.isalnum()) == s_clean), None)
 
             if t_col:
                 mapped_targets.add(t_col)
@@ -1989,25 +1976,17 @@ class ComparisonEngine:
                     elif mapped_type == 'string' or 'char' in str(source[source_col].dtype).lower():
                         source[source_col] = source[source_col].fillna('').astype('string')  # Use pandas string type
                         target[source_col] = target[source_col].fillna('').astype('string')
-                    elif mapped_type in ['int32', 'int64'] or any(id_col in source_col.upper() for id_col in ['SDID', 'ID']):  # Special handling for ID columns
+                    elif mapped_type in ['int32', 'int64']:  # Handle integer columns
                         try:
-                            # For ID columns, first convert to string and clean
-                            if any(id_col in source_col.upper() for id_col in ['SDID', 'ID']):
-                                # Remove any decimal points and zeros after decimal
-                                source[source_col] = source[source_col].astype(str).replace(r'\.0*$', '', regex=True)
-                                target[source_col] = target[source_col].astype(str).replace(r'\.0*$', '', regex=True)
+                            # Special handling for SDID columns
+                            if 'sdid' in source_col.lower():
+                                # Convert to numeric while preserving NaN
+                                source[source_col] = pd.to_numeric(source[source_col], errors='coerce')
+                                target[source_col] = pd.to_numeric(target[source_col], errors='coerce')
                                 
-                                # Convert empty, NaN, or None to empty string
-                                source[source_col] = source[source_col].replace(['nan', 'None', 'none', 'NaN', '<NA>', ''], '')
-                                target[source_col] = target[source_col].replace(['nan', 'None', 'none', 'NaN', '<NA>', ''], '')
-                                
-                                # Remove any leading/trailing whitespace
-                                source[source_col] = source[source_col].str.strip()
-                                target[source_col] = target[source_col].str.strip()
-                                
-                                # Keep as string for ID columns
-                                source[source_col] = source[source_col].astype('string')
-                                target[source_col] = target[source_col].astype('string')
+                                # Fill NaN with 0 and convert to int64
+                                source[source_col] = source[source_col].fillna(0).astype(np.int64)
+                                target[source_col] = target[source_col].fillna(0).astype(np.int64)
                             else:
                                 # For other integer columns, use standard conversion
                                 source[source_col] = pd.to_numeric(source[source_col], errors='coerce')
