@@ -165,17 +165,22 @@ class DataLoader:
             elif db_type == 'teradata':
                 username = connection_params.get('username')
                 password = connection_params.get('password')
+                server = connection_params.get('server')
                 
-                if not username or not password:
-                    raise ValueError("Username and password are required for Teradata")
+                if not username or not password or not server:
+                    raise ValueError("Username, password, and hostname are required for Teradata")
                 
-                encoded_password = quote_plus(password)
-                # Use teradata dialect with pyodbc
-                conn_str = (
-                    f"teradata://{username}:{encoded_password}"
-                    f"@{server}/?database={database}"
-                )
-                logger.info("Using Teradata connection")
+                try:
+                    import teradatasql
+                    conn = teradatasql.connect(host=server, user=username, password=password)
+                    # Create a wrapper engine that works with pandas
+                    engine = sqlalchemy.create_engine('teradata://', creator=lambda: conn)
+                    logger.info("Teradata connection successful")
+                    return engine
+                except ImportError:
+                    raise ImportError("teradatasql package is required for Teradata connections")
+                except Exception as e:
+                    raise ConnectionError(f"Failed to connect to Teradata: {str(e)}")
             else:
                 raise ValueError(f"Unsupported database type: {db_type}")
 
