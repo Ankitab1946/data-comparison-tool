@@ -177,10 +177,30 @@ class DataLoader:
                 try:
                     import teradatasql
                     conn = teradatasql.connect(host=server, user=username, password=password)
-                    # Create a wrapper engine that works with pandas
-                    engine = sqlalchemy.create_engine('teradata://', creator=lambda: conn)
+                    
+                    # Create a mock engine object that works with pandas.read_sql
+                    class TeradataConnection:
+                        def __init__(self, conn):
+                            self.conn = conn
+                            
+                        def execute(self, sql):
+                            cursor = self.conn.cursor()
+                            cursor.execute(str(sql))
+                            columns = [desc[0] for desc in cursor.description]
+                            data = cursor.fetchall()
+                            return pd.DataFrame(data, columns=columns)
+                    
+                    class TeradataEngine:
+                        def __init__(self, conn):
+                            self.conn = conn
+                        
+                        def connect(self):
+                            return TeradataConnection(self.conn)
+                    
+                    engine = TeradataEngine(conn)
                     logger.info("Teradata connection successful")
                     return engine
+                    
                 except ImportError:
                     raise ImportError("teradatasql package is required for Teradata connections")
                 except Exception as e:
