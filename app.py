@@ -633,23 +633,31 @@ def main():
     # Load Data button
     if st.button("Load Data"):
         try:
-            # Validate inputs before loading
+
+            # Validate source input
             if source_type in ['CSV file', 'DAT file', 'Parquet file', 'Flat files inside zipped folder']:
                 if 'source_file' not in st.session_state or st.session_state.source_file is None:
                     st.error(f"Please upload a {source_type} for source data")
                     return
             else:
-                if not source_params or not source_params.get('server') or not source_params.get('database'):
-                    st.error("Please provide all required connection parameters for source")
+                if not source_params or not source_params.get('server'):
+                    st.error("Please provide hostname for source")
+                    return
+                if source_type != 'Teradata' and not source_params.get('database'):
+                    st.error("Please provide database name for source")
                     return
 
+            # Validate target input
             if target_type in ['CSV file', 'DAT file', 'Parquet file', 'Flat files inside zipped folder']:
                 if 'target_file' not in st.session_state or st.session_state.target_file is None:
                     st.error(f"Please upload a {target_type} for target data")
                     return
             else:
-                if not target_params or not target_params.get('server') or not target_params.get('database'):
-                    st.error("Please provide all required connection parameters for target")
+                if not target_params or not target_params.get('server'):
+                    st.error("Please provide hostname for target")
+                    return
+                if target_type != 'Teradata' and not target_params.get('database'):
+                    st.error("Please provide database name for target")
                     return
 
             # Load source data
