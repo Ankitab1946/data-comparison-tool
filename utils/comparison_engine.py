@@ -1713,35 +1713,29 @@ class ComparisonEngine:
             # Try exact match first
             t_col = s_col if s_col in target_cols else None
             
-            # Try case-insensitive and fuzzy matching for ID columns
-            if 'id' in s_col.lower():
+            # If no exact match, try case-insensitive match
+            if not t_col:
                 # For ID columns, try more aggressive matching
-                if not t_col:
-                    # Try exact case-insensitive match
+                if 'id' in s_col.lower():
+                    # Try variations of ID column names
+                    variations = [
+                        s_col.lower(),  # exact lowercase match
+                        s_col.lower().replace('sd', ''),  # without 'sd' prefix
+                        s_col.lower().replace('sdid', 'sdsid'),  # specific sdid->sdsid mapping
+                        ''.join(e.lower() for e in s_col if e.isalnum())  # alphanumeric only
+                    ]
+                    
+                    for variation in variations:
+                        t_col = next((col for col in target_cols if 
+                                    col.lower() == variation or
+                                    col.lower().replace('sd', '') == variation or
+                                    ''.join(e.lower() for e in col if e.isalnum()) == variation), None)
+                        if t_col:
+                            break
+                else:
+                    # Standard case-insensitive match for non-ID columns
                     t_col = next((col for col in target_cols 
                                 if col.lower() == s_col.lower()), None)
-                
-                if not t_col:
-                    # Try matching by removing 'sd' prefix and comparing
-                    s_clean = s_col.lower().replace('sd', '')
-                    t_col = next((col for col in target_cols 
-                                if col.lower().replace('sd', '') == s_clean), None)
-                
-                if not t_col:
-                    # Try matching by removing all non-alphanumeric chars
-                    s_clean = ''.join(e.lower() for e in s_col if e.isalnum())
-                    t_col = next((col for col in target_cols 
-                                if ''.join(e.lower() for e in col if e.isalnum()) == s_clean), None)
-            else:
-                # For non-ID columns, use standard matching
-                if not t_col:
-                    t_col = next((col for col in target_cols 
-                                if col.lower() == s_col.lower()), None)
-                
-                if not t_col:
-                    s_clean = ''.join(e.lower() for e in s_col if e.isalnum())
-                    t_col = next((col for col in target_cols 
-                                if ''.join(e.lower() for e in col if e.isalnum()) == s_clean), None)
 
             if t_col:
                 mapped_targets.add(t_col)
@@ -1768,31 +1762,30 @@ class ComparisonEngine:
             original_source_type = source_type
             original_target_type = target_type
             
-            # Special handling for ID columns
-            if 'id' in s_col.lower():
-                # Always use string type for ID columns
-                mapped_type = 'string'
-                original_source_type = 'string'
-                original_target_type = 'string'
+            # Determine final type
+            if source_mapped == target_mapped:
+                mapped_type = source_mapped
             else:
-                # For non-ID columns, use standard type mapping
-                if source_mapped == target_mapped:
-                    mapped_type = source_mapped
+                # For ID columns, preserve numeric types if both are numeric
+                if 'id' in s_col.lower() and all(t in ['int32', 'int64'] for t in [source_mapped, target_mapped]):
+                    mapped_type = 'int64'  # Use wider integer type for IDs
+                    original_source_type = source_type
+                    original_target_type = target_type
+                # For mismatched types, prefer string for text-like columns
+                elif any(t in str(source_type).lower() or t in str(target_type).lower() 
+                        for t in ['char', 'text', 'string', 'object']):
+                    mapped_type = 'string'
+                    original_source_type = 'string'
+                    original_target_type = 'string'
+                # For numeric types, use the wider type
+                elif all(t in ['int32', 'int64', 'float32', 'float64'] for t in [source_mapped, target_mapped]):
+                    mapped_type = 'float64'  # widest numeric type
+                    original_source_type = source_type
+                    original_target_type = target_type
                 else:
-                    # For mismatched types, prefer string for text-like columns
-                    if any(t in str(source_type).lower() or t in str(target_type).lower() 
-                          for t in ['char', 'text', 'string', 'object']):
-                        mapped_type = 'string'
-                        original_source_type = 'string'
-                        original_target_type = 'string'
-                    else:
-                        # For numeric types, use the wider type
-                        if all(t in ['int32', 'int64', 'float32', 'float64'] for t in [source_mapped, target_mapped]):
-                            mapped_type = 'float64'  # widest numeric type
-                        else:
-                            mapped_type = 'string'  # fallback for incompatible types
-                            original_source_type = 'string'
-                            original_target_type = 'string'
+                    mapped_type = 'string'  # fallback for incompatible types
+                    original_source_type = 'string'
+                    original_target_type = 'string'
 
             # Create mapping with editable types
             mapping_entry = {
@@ -1996,25 +1989,17 @@ class ComparisonEngine:
                     elif mapped_type == 'string' or 'char' in str(source[source_col].dtype).lower():
                         source[source_col] = source[source_col].fillna('').astype('string')  # Use pandas string type
                         target[source_col] = target[source_col].fillna('').astype('string')
-                    elif mapped_type in ['int32', 'int64'] or any(id_col in source_col.upper() for id_col in ['SDID', 'ID']):  # Special handling for ID columns
+                    elif mapped_type in ['int32', 'int64']:  # Handle integer columns
                         try:
-                            # For ID columns, first convert to string and clean
-                            if any(id_col in source_col.upper() for id_col in ['SDID', 'ID']):
-                                # Remove any decimal points and zeros after decimal
-                                source[source_col] = source[source_col].astype(str).replace(r'\.0*$', '', regex=True)
-                                target[source_col] = target[source_col].astype(str).replace(r'\.0*$', '', regex=True)
+                            # Special handling for ID columns
+                            if 'id' in source_col.lower():
+                                # Convert to numeric while preserving NaN
+                                source[source_col] = pd.to_numeric(source[source_col], errors='coerce')
+                                target[source_col] = pd.to_numeric(target[source_col], errors='coerce')
                                 
-                                # Convert empty, NaN, or None to empty string
-                                source[source_col] = source[source_col].replace(['nan', 'None', 'none', 'NaN', '<NA>', ''], '')
-                                target[source_col] = target[source_col].replace(['nan', 'None', 'none', 'NaN', '<NA>', ''], '')
-                                
-                                # Remove any leading/trailing whitespace
-                                source[source_col] = source[source_col].str.strip()
-                                target[source_col] = target[source_col].str.strip()
-                                
-                                # Keep as string for ID columns
-                                source[source_col] = source[source_col].astype('string')
-                                target[source_col] = target[source_col].astype('string')
+                                # Fill NaN with 0 and convert to int64
+                                source[source_col] = source[source_col].fillna(0).astype(np.int64)
+                                target[source_col] = target[source_col].fillna(0).astype(np.int64)
                             else:
                                 # For other integer columns, use standard conversion
                                 source[source_col] = pd.to_numeric(source[source_col], errors='coerce')
