@@ -2431,19 +2431,40 @@ class ComparisonEngine:
             output_path = Path(output_dir)
             output_path.mkdir(parents=True, exist_ok=True)
 
-            # Create copies of dataframes to avoid modifying originals
+            # Create copies of dataframes and apply mapping types
             source_df = self.source_df.copy()
             target_df = self.target_df.copy()
 
-            # Convert problematic columns to string
-            for df in [source_df, target_df]:
-                for col in df.columns:
-                    # Check if column type is problematic
-                    col_type = str(df[col].dtype).lower()
-                    if ('object' in col_type or 
-                        'unsupported' in col_type or 
-                        col == 'ColumnNameID' or
-                        any(t in col_type for t in ['char', 'text'])):
+            if self.mapping:
+                logger.info("Applying mapping types before generating profiles...")
+                for mapping in self.mapping:
+                    if mapping['exclude'] or not mapping['target']:
+                        continue
+
+                    source_col = mapping['source']
+                    target_col = mapping['target']
+                    mapped_type = mapping.get('data_type', 'string')
+
+                    try:
+                        # Apply consistent type conversion based on mapping
+                        if mapped_type == 'string' or mapped_type == 'datetime64[ns]':
+                            source_df[source_col] = source_df[source_col].fillna('').astype(str)
+                            target_df[target_col] = target_df[target_col].fillna('').astype(str)
+                        elif mapped_type in ['int32', 'int64']:
+                            source_df[source_col] = pd.to_numeric(source_df[source_col], errors='coerce').fillna(0).astype(np.int64)
+                            target_df[target_col] = pd.to_numeric(target_df[target_col], errors='coerce').fillna(0).astype(np.int64)
+                        elif mapped_type in ['float32', 'float64']:
+                            source_df[source_col] = pd.to_numeric(source_df[source_col], errors='coerce').fillna(0).astype(np.float64)
+                            target_df[target_col] = pd.to_numeric(target_df[target_col], errors='coerce').fillna(0).astype(np.float64)
+                    except Exception as e:
+                        logger.warning(f"Error converting types for column {source_col}: {str(e)}")
+                        # Convert to string as fallback
+                        source_df[source_col] = source_df[source_col].fillna('').astype(str)
+                        target_df[target_col] = target_df[target_col].fillna('').astype(str)
+            else:
+                # If no mapping, convert all to string
+                for df in [source_df, target_df]:
+                    for col in df.columns:
                         df[col] = df[col].fillna('').astype(str)
 
             # Generate individual profiles with memory optimization
