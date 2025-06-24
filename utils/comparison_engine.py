@@ -1965,7 +1965,7 @@ class ComparisonEngine:
             try:
                 # Get single columns from original dataframes
                 source[source_col] = self.source_df[source_col].copy()
-                target[source_col] = self.target_df[target_col].copy()  # Use source_col as new name
+                target[target_col] = self.target_df[target_col].copy()  # Keep target column name initially
 
                 # Get mapped type from mapping configuration
                 mapped_type = mapping.get('data_type', 'string')
@@ -1976,108 +1976,108 @@ class ComparisonEngine:
                     if source_col == 'Feed_ID':
                         # Convert blank and whitespace-only cells to <NA>
                         source[source_col] = source[source_col].replace(r'^\s*$', '<NA>', regex=True)
-                        target[source_col] = target[source_col].replace(r'^\s*$', '<NA>', regex=True)
+                        target[target_col] = target[target_col].replace(r'^\s*$', '<NA>', regex=True)
                         # Also convert NaN and None to <NA>
                         source[source_col] = source[source_col].fillna('<NA>').astype('string')
-                        target[source_col] = target[source_col].fillna('<NA>').astype('string')
+                        target[target_col] = target[target_col].fillna('<NA>').astype('string')
                     # Handle date columns - standardize format with better parsing
                     elif mapped_type == 'datetime64[ns]':
                         # First convert to datetime with flexible parsing
                         source[source_col] = pd.to_datetime(source[source_col], errors='coerce', infer_datetime_format=True)
-                        target[source_col] = pd.to_datetime(target[source_col], errors='coerce', infer_datetime_format=True)
+                        target[target_col] = pd.to_datetime(target[target_col], errors='coerce', infer_datetime_format=True)
                         
                         # Then convert to string in a consistent format
                         source[source_col] = source[source_col].apply(lambda x: x.strftime('%Y-%m-%d %H:%M:%S') if pd.notnull(x) else '')
-                        target[source_col] = target[source_col].apply(lambda x: x.strftime('%Y-%m-%d %H:%M:%S') if pd.notnull(x) else '')
+                        target[target_col] = target[target_col].apply(lambda x: x.strftime('%Y-%m-%d %H:%M:%S') if pd.notnull(x) else '')
                     elif mapped_type == 'string' or 'char' in str(source[source_col].dtype).lower():
                         source[source_col] = source[source_col].fillna('').astype(str)  # Use Python string type
-                        target[source_col] = target[source_col].fillna('').astype(str)
+                        target[target_col] = target[target_col].fillna('').astype(str)
                     elif mapped_type in ['int32', 'int64']:  # Handle integer columns
                         try:
                             # Special handling for SDID columns with detailed logging
                             if 'sdid' in source_col.lower():
                                 logger.info(f"Processing SDID column type conversion: {source_col}")
                                 logger.info(f"Source column type before conversion: {source[source_col].dtype}")
-                                logger.info(f"Target column type before conversion: {target[source_col].dtype}")
+                                logger.info(f"Target column type before conversion: {target[target_col].dtype}")
                                 
                                 try:
                                     # Convert to numeric while preserving NaN
                                     source[source_col] = pd.to_numeric(source[source_col], errors='coerce')
-                                    target[source_col] = pd.to_numeric(target[source_col], errors='coerce')
+                                    target[target_col] = pd.to_numeric(target[target_col], errors='coerce')
                                     
-                                    logger.info(f"After numeric conversion - Source nulls: {source[source_col].isnull().sum()}, Target nulls: {target[source_col].isnull().sum()}")
+                                    logger.info(f"After numeric conversion - Source nulls: {source[source_col].isnull().sum()}, Target nulls: {target[target_col].isnull().sum()}")
                                     
                                     # Fill NaN with 0 and convert to int64
                                     source[source_col] = source[source_col].fillna(0).astype('int64')
-                                    target[source_col] = target[source_col].fillna(0).astype('int64')
+                                    target[target_col] = target[target_col].fillna(0).astype('int64')
                                     
                                     logger.info(f"Final source column type: {source[source_col].dtype}")
-                                    logger.info(f"Final target column type: {target[source_col].dtype}")
+                                    logger.info(f"Final target column type: {target[target_col].dtype}")
                                     logger.info(f"Sample values - Source: {source[source_col].head()}")
-                                    logger.info(f"Sample values - Target: {target[source_col].head()}")
+                                    logger.info(f"Sample values - Target: {target[target_col].head()}")
                                     
                                 except Exception as e:
                                     logger.error(f"Error converting SDID column {source_col}: {str(e)}")
                                     logger.error(f"Source unique values: {source[source_col].unique()}")
-                                    logger.error(f"Target unique values: {target[source_col].unique()}")
+                                    logger.error(f"Target unique values: {target[target_col].unique()}")
                                     raise
                             else:
                                 # For other integer columns, use standard conversion
                                 source[source_col] = pd.to_numeric(source[source_col], errors='coerce')
-                                target[source_col] = pd.to_numeric(target[source_col], errors='coerce')
+                                target[target_col] = pd.to_numeric(target[target_col], errors='coerce')
                             
                             # Check cardinality
                             unique_count = min(
                                 source[source_col].nunique(),
-                                target[source_col].nunique()
+                                target[target_col].nunique()
                             )
                             
                             if unique_count > 1000000:  # High cardinality
                                 source[source_col] = source[source_col].fillna('').astype('string')
-                                target[source_col] = target[source_col].fillna('').astype('string')
+                                target[target_col] = target[target_col].fillna('').astype('string')
                                 logger.warning(f"Converting {source_col} to string due to high cardinality")
                             else:
                                 # Convert to integer, preserving NaN values
                                 source[source_col] = source[source_col].astype(pd.Int64Dtype())
-                                target[source_col] = target[source_col].astype(pd.Int64Dtype())
+                                target[target_col] = target[target_col].astype(pd.Int64Dtype())
                         except Exception as e:
                             logger.warning(f"Integer conversion failed for {source_col}: {str(e)}. Converting to string.")
                             source[source_col] = source[source_col].fillna('').astype('string')
-                            target[source_col] = target[source_col].fillna('').astype('string')
+                            target[target_col] = target[target_col].fillna('').astype('string')
                     elif mapped_type in ['float32', 'float64']:
                         # Check cardinality before converting
                         unique_count = min(
                             source[source_col].nunique(),
-                            target[source_col].nunique()
+                            target[target_col].nunique()
                         )
                         if unique_count > 1000000:  # High cardinality
                             source[source_col] = source[source_col].fillna('').astype('string')
-                            target[source_col] = target[source_col].fillna('').astype('string')
+                            target[target_col] = target[target_col].fillna('').astype('string')
                             logger.warning(f"Converting {source_col} to string due to high cardinality")
                         else:
                             # Use float32 instead of float64 to save memory
                             # Check if values contain decimal points
                             source_has_decimal = source[source_col].astype(str).str.contains(r'\.').any()
-                            target_has_decimal = target[source_col].astype(str).str.contains(r'\.').any()
+                            target_has_decimal = target[target_col].astype(str).str.contains(r'\.').any()
                             
                             if source_has_decimal or target_has_decimal:
                                 # Convert to float64 for decimal values
                                 source[source_col] = pd.to_numeric(source[source_col], errors='coerce').astype('float64')
-                                target[source_col] = pd.to_numeric(target[source_col], errors='coerce').astype('float64')
+                                target[target_col] = pd.to_numeric(target[target_col], errors='coerce').astype('float64')
                             else:
                                 # Use int64 for whole numbers
                                 source[source_col] = pd.to_numeric(source[source_col], errors='coerce').astype('int64')
-                                target[source_col] = pd.to_numeric(target[source_col], errors='coerce').astype('int64')
+                                target[target_col] = pd.to_numeric(target[target_col], errors='coerce').astype('int64')
                     elif mapped_type == 'datetime64[ns]':
                         source[source_col] = pd.to_datetime(source[source_col], errors='coerce')
-                        target[source_col] = pd.to_datetime(target[source_col], errors='coerce')
+                        target[target_col] = pd.to_datetime(target[target_col], errors='coerce')
                     elif mapped_type == 'bool':
                         source[source_col] = source[source_col].fillna(False).astype('boolean')  # Use pandas boolean type
-                        target[source_col] = target[source_col].fillna(False).astype('boolean')
+                        target[target_col] = target[target_col].fillna(False).astype('boolean')
                     else:
                         # Default to string for unknown types
                         source[source_col] = source[source_col].fillna('').astype('string')
-                        target[source_col] = target[source_col].fillna('').astype('string')
+                        target[target_col] = target[target_col].fillna('').astype('string')
 
                     # Free memory after processing each column
                     import gc
@@ -2086,15 +2086,18 @@ class ComparisonEngine:
                 except Exception as e:
                     logger.warning(f"Type conversion failed for column {source_col}: {str(e)}. Converting to string.")
                     source[source_col] = source[source_col].fillna('').astype('string')
-                    target[source_col] = target[source_col].fillna('').astype('string')
+                    target[target_col] = target[target_col].fillna('').astype('string')
 
             except Exception as e:
                 logger.error(f"Error processing column {source_col}: {str(e)}")
                 # Skip problematic column
                 if source_col in source.columns:
                     source.drop(columns=[source_col], inplace=True)
-                if source_col in target.columns:
-                    target.drop(columns=[source_col], inplace=True)
+                if target_col in target.columns:
+                    target.drop(columns=[target_col], inplace=True)
+
+        # Rename target columns to source column names for consistency
+        target.rename(columns={mapping['target']: mapping['source'] for mapping in self.mapping if not mapping['exclude'] and mapping['target']}, inplace=True)
 
         # Return the prepared dataframes
         return source, target
