@@ -2602,6 +2602,7 @@ class ComparisonEngine:
             target_profile.to_file(str(target_path))
             
             # Generate comparison report with enhanced error handling and memory optimization
+            import traceback
             try:
                 logger.info("Generating comparison report...")
                 
@@ -2619,6 +2620,7 @@ class ComparisonEngine:
                 
             except Exception as e:
                 logger.error(f"Error generating comparison report: {str(e)}")
+                logger.error(traceback.format_exc())
                 # Create a more detailed error report
                 with open(str(comparison_path), 'w', encoding='utf-8') as f:
                     f.write(f"""
