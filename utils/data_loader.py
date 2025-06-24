@@ -129,12 +129,16 @@ class DataLoader:
             
             db_type = connection_params['type'].lower()
             server = connection_params.get('server')
-            database = connection_params.get('database')
             
-            if not server or not database:
-                raise ValueError("Server and database are required parameters")
+            if not server:
+                raise ValueError("Server/Hostname is required")
+                
+            # Only check for database if not Teradata
+            if db_type != 'teradata' and not connection_params.get('database'):
+                raise ValueError("Database name is required for non-Teradata connections")
             
-            logger.info(f"Connecting to {db_type} database: {server}/{database}")
+            database = connection_params.get('database', '')
+            logger.info(f"Connecting to {db_type} database: {server}{f'/{database}' if database else ''}")
             
             if db_type == 'sql_server':
                 # Check for Windows Authentication (SSO)
