@@ -1763,51 +1763,32 @@ class ComparisonEngine:
             is_sql_source = any(sql_type in source_type.lower() for sql_type in self.SQL_TYPE_MAPPING.keys())
             is_sql_target = any(sql_type in target_type.lower() for sql_type in self.SQL_TYPE_MAPPING.keys())
             
-            # Check for float values in source and target
-            try:
-                source_sample = self.source_df[s_col].dropna().head(1000)
-                target_sample = self.target_df[t_col].dropna().head(1000) if t_col else pd.Series()
-                
-                source_has_decimal = source_sample.astype(str).str.contains(r'\.').any()
-                target_has_decimal = target_sample.astype(str).str.contains(r'\.').any()
-                
-                # Get mapped types
-                source_mapped = self._get_mapped_type(s_col, source_type, is_sql_source)
-                target_mapped = self._get_mapped_type(s_col, target_type, is_sql_target) if t_col else source_mapped
-                
-                # Store original types
-                original_source_type = source_type
-                original_target_type = target_type
-                
-                # Determine final type
-                if source_mapped == target_mapped:
-                    mapped_type = source_mapped
+            # Get mapped types
+            source_mapped = self._get_mapped_type(s_col, source_type, is_sql_source)
+            target_mapped = self._get_mapped_type(s_col, target_type, is_sql_target) if t_col else source_mapped
+            
+            # Store original types
+            original_source_type = source_type
+            original_target_type = target_type
+            
+            # Determine final type
+            if source_mapped == target_mapped:
+                mapped_type = source_mapped
+            else:
+                # For mismatched types, prefer string for text-like columns
+                if any(t in str(source_type).lower() or t in str(target_type).lower() 
+                      for t in ['char', 'text', 'string', 'object']):
+                    mapped_type = 'string'
+                    original_source_type = 'string'
+                    original_target_type = 'string'
                 else:
-                    # For mismatched types, prefer string for text-like columns
-                    if any(t in str(source_type).lower() or t in str(target_type).lower() 
-                          for t in ['char', 'text', 'string', 'object']):
-                        mapped_type = 'string'
+                    # For numeric types, use the wider type
+                    if all(t in ['int32', 'int64', 'float32', 'float64'] for t in [source_mapped, target_mapped]):
+                        mapped_type = 'float64'  # widest numeric type
+                    else:
+                        mapped_type = 'string'  # fallback for incompatible types
                         original_source_type = 'string'
                         original_target_type = 'string'
-                    else:
-                        # For numeric types, check for decimals
-                        if all(t in ['int32', 'int64', 'float32', 'float64'] for t in [source_mapped, target_mapped]):
-                            if source_has_decimal or target_has_decimal:
-                                mapped_type = 'float64'
-                                logger.info(f"Column {s_col} contains decimal values, using float64")
-                            else:
-                                mapped_type = 'int64'
-                                logger.info(f"Column {s_col} contains only whole numbers, using int64")
-                        else:
-                            mapped_type = 'string'  # fallback for incompatible types
-                            original_source_type = 'string'
-                            original_target_type = 'string'
-            except Exception as e:
-                logger.warning(f"Error checking float values for {s_col}: {str(e)}")
-                # Default to string type if there's an error
-                mapped_type = 'string'
-                original_source_type = 'string'
-                original_target_type = 'string'
 
             # Create mapping with editable types
             mapping_entry = {
