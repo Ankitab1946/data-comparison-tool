@@ -1970,21 +1970,25 @@ class ComparisonEngine:
                     elif mapped_type == 'string' or 'char' in str(source[source_col].dtype).lower():
                         source[source_col] = source[source_col].fillna('').astype('string')  # Use pandas string type
                         target[source_col] = target[source_col].fillna('').astype('string')
-                    elif mapped_type in ['int32', 'int64'] or source_col in ['ColumnSDID', 'ClientID']:  # Special handling for ID columns
+                    elif mapped_type in ['int32', 'int64'] or any(id_col in source_col.upper() for id_col in ['SDID', 'ID']):  # Special handling for ID columns
                         try:
                             # For ID columns, first convert to string and clean
-                            if source_col in ['ColumnSDID', 'ClientID']:
+                            if any(id_col in source_col.upper() for id_col in ['SDID', 'ID']):
                                 # Remove any decimal points and zeros after decimal
-                                source[source_col] = source[source_col].astype(str).replace(r'\.0$', '', regex=True)
-                                target[source_col] = target[source_col].astype(str).replace(r'\.0$', '', regex=True)
+                                source[source_col] = source[source_col].astype(str).replace(r'\.0*$', '', regex=True)
+                                target[source_col] = target[source_col].astype(str).replace(r'\.0*$', '', regex=True)
                                 
-                                # Convert empty or NaN to empty string
-                                source[source_col] = source[source_col].replace(['nan', 'None', ''], '')
-                                target[source_col] = target[source_col].replace(['nan', 'None', ''], '')
+                                # Convert empty, NaN, or None to empty string
+                                source[source_col] = source[source_col].replace(['nan', 'None', 'none', 'NaN', '<NA>', ''], '')
+                                target[source_col] = target[source_col].replace(['nan', 'None', 'none', 'NaN', '<NA>', ''], '')
                                 
-                                # Convert back to numeric, treating empty string as NaN
-                                source[source_col] = pd.to_numeric(source[source_col], errors='coerce')
-                                target[source_col] = pd.to_numeric(target[source_col], errors='coerce')
+                                # Remove any leading/trailing whitespace
+                                source[source_col] = source[source_col].str.strip()
+                                target[source_col] = target[source_col].str.strip()
+                                
+                                # Keep as string for ID columns
+                                source[source_col] = source[source_col].astype('string')
+                                target[source_col] = target[source_col].astype('string')
                             else:
                                 # For other integer columns, use standard conversion
                                 source[source_col] = pd.to_numeric(source[source_col], errors='coerce')
