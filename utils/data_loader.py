@@ -179,23 +179,22 @@ class DataLoader:
                     conn = teradatasql.connect(host=server, user=username, password=password)
                     
                     # Create a mock engine object that works with pandas.read_sql
-                    class TeradataConnection:
+                    class TeradataEngine:
                         def __init__(self, conn):
-                            self.conn = conn
+                            self._conn = conn
+                        
+                        def connect(self):
+                            return self
+                            
+                        def cursor(self):
+                            return self._conn.cursor()
                             
                         def execute(self, sql):
-                            cursor = self.conn.cursor()
+                            cursor = self._conn.cursor()
                             cursor.execute(str(sql))
                             columns = [desc[0] for desc in cursor.description]
                             data = cursor.fetchall()
                             return pd.DataFrame(data, columns=columns)
-                    
-                    class TeradataEngine:
-                        def __init__(self, conn):
-                            self.conn = conn
-                        
-                        def connect(self):
-                            return TeradataConnection(self.conn)
                     
                     engine = TeradataEngine(conn)
                     logger.info("Teradata connection successful")
