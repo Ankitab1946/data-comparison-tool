@@ -123,10 +123,12 @@ def get_connection_inputs(source_type: str, prefix: str) -> Dict[str, Any]:
                 "Hostname" if source_type == "Teradata" else f"{source_type} Server",
                 key=f"{prefix}_server"
             )
-            params['database'] = st.text_input(
-                "Database Name",
-                key=f"{prefix}_database"
-            )
+            # Only show database field for non-Teradata connections
+            if source_type != "Teradata":
+                params['database'] = st.text_input(
+                    "Database Name",
+                    key=f"{prefix}_database"
+                )
             # Add Windows Authentication option
             use_windows_auth = st.checkbox(
                 "Use Windows Authentication",
