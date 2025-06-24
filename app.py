@@ -120,7 +120,7 @@ def get_connection_inputs(source_type: str, prefix: str) -> Dict[str, Any]:
         col1, col2 = st.columns(2)
         with col1:
             params['server'] = st.text_input(
-                f"{source_type} Server",
+                "Hostname" if source_type == "Teradata" else f"{source_type} Server",
                 key=f"{prefix}_server"
             )
             params['database'] = st.text_input(
