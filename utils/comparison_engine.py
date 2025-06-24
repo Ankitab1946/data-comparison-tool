@@ -1763,32 +1763,51 @@ class ComparisonEngine:
             is_sql_source = any(sql_type in source_type.lower() for sql_type in self.SQL_TYPE_MAPPING.keys())
             is_sql_target = any(sql_type in target_type.lower() for sql_type in self.SQL_TYPE_MAPPING.keys())
             
-            # Get mapped types
-            source_mapped = self._get_mapped_type(s_col, source_type, is_sql_source)
-            target_mapped = self._get_mapped_type(s_col, target_type, is_sql_target) if t_col else source_mapped
-            
-            # Store original types
-            original_source_type = source_type
-            original_target_type = target_type
-            
-            # Determine final type
-            if source_mapped == target_mapped:
-                mapped_type = source_mapped
-            else:
-                # For mismatched types, prefer string for text-like columns
-                if any(t in str(source_type).lower() or t in str(target_type).lower() 
-                      for t in ['char', 'text', 'string', 'object']):
-                    mapped_type = 'string'
-                    original_source_type = 'string'
-                    original_target_type = 'string'
+            # Check for float values in source and target
+            try:
+                source_sample = self.source_df[s_col].dropna().head(1000)
+                target_sample = self.target_df[t_col].dropna().head(1000) if t_col else pd.Series()
+                
+                source_has_decimal = source_sample.astype(str).str.contains(r'\.').any()
+                target_has_decimal = target_sample.astype(str).str.contains(r'\.').any()
+                
+                # Get mapped types
+                source_mapped = self._get_mapped_type(s_col, source_type, is_sql_source)
+                target_mapped = self._get_mapped_type(s_col, target_type, is_sql_target) if t_col else source_mapped
+                
+                # Store original types
+                original_source_type = source_type
+                original_target_type = target_type
+                
+                # Determine final type
+                if source_mapped == target_mapped:
+                    mapped_type = source_mapped
                 else:
-                    # For numeric types, use the wider type
-                    if all(t in ['int32', 'int64', 'float32', 'float64'] for t in [source_mapped, target_mapped]):
-                        mapped_type = 'float64'  # widest numeric type
-                    else:
-                        mapped_type = 'string'  # fallback for incompatible types
+                    # For mismatched types, prefer string for text-like columns
+                    if any(t in str(source_type).lower() or t in str(target_type).lower() 
+                          for t in ['char', 'text', 'string', 'object']):
+                        mapped_type = 'string'
                         original_source_type = 'string'
                         original_target_type = 'string'
+                    else:
+                        # For numeric types, check for decimals
+                        if all(t in ['int32', 'int64', 'float32', 'float64'] for t in [source_mapped, target_mapped]):
+                            if source_has_decimal or target_has_decimal:
+                                mapped_type = 'float64'
+                                logger.info(f"Column {s_col} contains decimal values, using float64")
+                            else:
+                                mapped_type = 'int64'
+                                logger.info(f"Column {s_col} contains only whole numbers, using int64")
+                        else:
+                            mapped_type = 'string'  # fallback for incompatible types
+                            original_source_type = 'string'
+                            original_target_type = 'string'
+            except Exception as e:
+                logger.warning(f"Error checking float values for {s_col}: {str(e)}")
+                # Default to string type if there's an error
+                mapped_type = 'string'
+                original_source_type = 'string'
+                original_target_type = 'string'
 
             # Create mapping with editable types
             mapping_entry = {
@@ -1990,8 +2009,8 @@ class ComparisonEngine:
                         source[source_col] = source[source_col].apply(lambda x: x.strftime('%Y-%m-%d %H:%M:%S') if pd.notnull(x) else '')
                         target[source_col] = target[source_col].apply(lambda x: x.strftime('%Y-%m-%d %H:%M:%S') if pd.notnull(x) else '')
                     elif mapped_type == 'string' or 'char' in str(source[source_col].dtype).lower():
-                        source[source_col] = source[source_col].fillna('').astype('string')  # Use pandas string type
-                        target[source_col] = target[source_col].fillna('').astype('string')
+                        source[source_col] = source[source_col].fillna('').astype(str)  # Use Python string type
+                        target[source_col] = target[source_col].fillna('').astype(str)
                     elif mapped_type in ['int32', 'int64']:  # Handle integer columns
                         try:
                             # Special handling for SDID columns with detailed logging
@@ -2008,8 +2027,8 @@ class ComparisonEngine:
                                     logger.info(f"After numeric conversion - Source nulls: {source[source_col].isnull().sum()}, Target nulls: {target[source_col].isnull().sum()}")
                                     
                                     # Fill NaN with 0 and convert to int64
-                                    source[source_col] = source[source_col].fillna(0).astype(np.int64)
-                                    target[source_col] = target[source_col].fillna(0).astype(np.int64)
+                                    source[source_col] = source[source_col].fillna(0).astype('int64')
+                                    target[source_col] = target[source_col].fillna(0).astype('int64')
                                     
                                     logger.info(f"Final source column type: {source[source_col].dtype}")
                                     logger.info(f"Final target column type: {target[source_col].dtype}")
@@ -2056,8 +2075,18 @@ class ComparisonEngine:
                             logger.warning(f"Converting {source_col} to string due to high cardinality")
                         else:
                             # Use float32 instead of float64 to save memory
-                            source[source_col] = pd.to_numeric(source[source_col], errors='coerce', downcast='float')
-                            target[source_col] = pd.to_numeric(target[source_col], errors='coerce', downcast='float')
+                            # Check if values contain decimal points
+                            source_has_decimal = source[source_col].astype(str).str.contains(r'\.').any()
+                            target_has_decimal = target[source_col].astype(str).str.contains(r'\.').any()
+                            
+                            if source_has_decimal or target_has_decimal:
+                                # Convert to float64 for decimal values
+                                source[source_col] = pd.to_numeric(source[source_col], errors='coerce').astype('float64')
+                                target[source_col] = pd.to_numeric(target[source_col], errors='coerce').astype('float64')
+                            else:
+                                # Use int64 for whole numbers
+                                source[source_col] = pd.to_numeric(source[source_col], errors='coerce').astype('int64')
+                                target[source_col] = pd.to_numeric(target[source_col], errors='coerce').astype('int64')
                     elif mapped_type == 'datetime64[ns]':
                         source[source_col] = pd.to_datetime(source[source_col], errors='coerce')
                         target[source_col] = pd.to_datetime(target[source_col], errors='coerce')
