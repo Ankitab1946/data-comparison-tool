@@ -170,9 +170,10 @@ class DataLoader:
                     raise ValueError("Username and password are required for Teradata")
                 
                 encoded_password = quote_plus(password)
+                # Use teradata dialect with pyodbc
                 conn_str = (
-                    f"teradatasql://{username}:{encoded_password}"
-                    f"@{server}/{database}"
+                    f"teradata://{username}:{encoded_password}"
+                    f"@{server}/?database={database}"
                 )
                 logger.info("Using Teradata connection")
             else:
