@@ -2507,15 +2507,8 @@ class ComparisonEngine:
                 if comparison_path.exists():
                     comparison_path.unlink()
                 
-                # Generate comparison with optimized settings
-                comparison_report = ProfileReport.compare(
-                    [source_profile, target_profile],
-                    title="Data Profile Comparison Report",
-                    progress_bar=False,
-                    minimal=True,
-                    explorative=True,
-                    pool_size=1
-                )
+                # Generate comparison with correct method signature
+                comparison_report = source_profile.compare(target_profile)
                 
                 # Save comparison report
                 logger.info("Saving comparison report...")
