@@ -238,79 +238,74 @@ class ReportGenerator:
                     count_sheet.set_column(col, col, 15)
 
                 # 2. Aggregation Check Tab
+                agg_sheet = workbook.add_worksheet('AggregationCheck')
+                
                 # Get numeric columns from both dataframes
                 source_numeric = set(source_df.select_dtypes(include=[np.number]).columns)
                 target_numeric = set(target_df.select_dtypes(include=[np.number]).columns)
                 numeric_cols = list(source_numeric.intersection(target_numeric))
 
                 if not numeric_cols:
-                    # Create worksheet with message if no common numeric columns
-                    agg_sheet = writer.book.create_sheet('AggregationCheck')
-                    agg_sheet.cell(row=1, column=1, value='No common numeric columns found for aggregation check')
+                    # Write message if no common numeric columns
+                    agg_sheet.write(0, 0, 'No common numeric columns found for aggregation check', cell_format)
                 else:
-                    # Calculate aggregations for common numeric columns
-                    source_aggs = self._calculate_aggregations(source_df, numeric_cols)
-                    target_aggs = self._calculate_aggregations(target_df, numeric_cols)
+                    # Write headers
+                    headers = ['Column', 'Metric', 'Source', 'Target', 'Result']
+                    for col, header in enumerate(headers):
+                        agg_sheet.write(0, col, header, header_format)
                     
-                    agg_comparison = []
+                    row = 1
                     for col in numeric_cols:
                         try:
-                            source_row = source_aggs[source_aggs['Column'] == col].iloc[0]
-                            target_row = target_aggs[target_aggs['Column'] == col].iloc[0]
+                            # Calculate metrics for source
+                            source_stats = source_df[col].agg(['sum', 'mean', 'min', 'max', 'std']).to_dict()
+                            target_stats = target_df[col].agg(['sum', 'mean', 'min', 'max', 'std']).to_dict()
                             
-                            for metric in ['Sum', 'Mean', 'Min', 'Max', 'StdDev']:
-                                # Handle NaN values
-                                source_val = source_row[metric]
-                                target_val = target_row[metric]
+                            for metric in ['sum', 'mean', 'min', 'max', 'std']:
+                                source_val = source_stats[metric]
+                                target_val = target_stats[metric]
                                 
+                                # Check if values match (considering floating point precision)
                                 if pd.isna(source_val) or pd.isna(target_val):
                                     matches = False
                                 else:
                                     matches = np.isclose(source_val, target_val, rtol=1e-05)
                                 
-                                agg_comparison.append({
-                                    'Column': col,
-                                    'Metric': metric,
-                                    'Source': source_val,
-                                    'Target': target_val,
-                                    'Result': 'PASS' if matches else 'FAIL'
-                                })
+                                # Write row
+                                agg_sheet.write(row, 0, col, cell_format)
+                                agg_sheet.write(row, 1, metric.upper(), cell_format)
+                                agg_sheet.write(row, 2, str(source_val), cell_format)
+                                agg_sheet.write(row, 3, str(target_val), cell_format)
+                                agg_sheet.write(row, 4, 'Pass' if matches else 'Fail',
+                                              pass_format if matches else fail_format)
+                                row += 1
+                                
                         except Exception as e:
                             logger.error(f"Error comparing column {col}: {str(e)}")
-                            # Add error entry
-                            for metric in ['Sum', 'Mean', 'Min', 'Max', 'StdDev']:
-                                agg_comparison.append({
-                                    'Column': col,
-                                    'Metric': metric,
-                                    'Source': 'ERROR',
-                                    'Target': 'ERROR',
-                                    'Result': 'FAIL'
-                                })
+                            # Write error row
+                            agg_sheet.write(row, 0, col, cell_format)
+                            agg_sheet.write(row, 1, 'ERROR', cell_format)
+                            agg_sheet.write(row, 2, 'ERROR', cell_format)
+                            agg_sheet.write(row, 3, 'ERROR', cell_format)
+                            agg_sheet.write(row, 4, 'Fail', fail_format)
+                            row += 1
                     
-                    agg_df = pd.DataFrame(agg_comparison)
-                    agg_df.to_excel(writer, sheet_name='AggregationCheck', index=False)
-                    
-                    # Apply conditional formatting
-                    agg_sheet = writer.sheets['AggregationCheck']
-                    for idx, result in enumerate(agg_df['Result'], start=2):
-                        cell = agg_sheet.cell(row=idx, column=5)
-                        self._style_excel_cell(cell, result == 'PASS')
+                    # Auto-adjust column widths
+                    for col in range(len(headers)):
+                        agg_sheet.set_column(col, col, 15)
 
                 # 3. Distinct Check Tab
-                # Create worksheet
-                distinct_sheet = writer.book.create_sheet('DistinctCheck')
+                distinct_sheet = workbook.add_worksheet('DistinctCheck')
                 
                 # Write headers
                 headers = ['Column', 'Source Distinct Count', 'Target Distinct Count', 'Count Match', 'Values Match', 'Source Values', 'Target Values']
-                for col_idx, header in enumerate(headers, start=1):
-                    cell = distinct_sheet.cell(row=1, column=col_idx, value=header)
-                    cell.font = Font(bold=True)
+                for col, header in enumerate(headers):
+                    distinct_sheet.write(0, col, header, header_format)
                 
                 # Get non-numeric columns
                 non_numeric_cols = source_df.select_dtypes(exclude=[np.number]).columns
                 
-                # Process each column
-                row_idx = 2
+                row = 1
                 for col in non_numeric_cols:
                     try:
                         # Get source values
@@ -333,30 +328,31 @@ class ReportGenerator:
                             target_display = 'Column not found'
                         
                         # Compare values
-                        count_match = 'PASS' if source_count == target_count else 'FAIL'
-                        values_match = 'PASS' if set(source_vals) == set(target_vals) else 'FAIL'
+                        count_match = 'Pass' if source_count == target_count else 'Fail'
+                        values_match = 'Pass' if set(source_vals) == set(target_vals) else 'Fail'
                         
                         # Write row
-                        values = [str(col), source_count, target_count, count_match, values_match, source_display, target_display]
-                        for col_idx, value in enumerate(values, start=1):
-                            cell = distinct_sheet.cell(row=row_idx, column=col_idx, value=value)
-                            if col_idx in [4, 5]:  # Format match columns
-                                fill_color = PatternFill(start_color='90EE90' if value == 'PASS' else 'FFB6C1', 
-                                                       end_color='90EE90' if value == 'PASS' else 'FFB6C1',
-                                                       fill_type='solid')
-                                cell.fill = fill_color
-                        row_idx += 1
+                        distinct_sheet.write(row, 0, str(col), cell_format)
+                        distinct_sheet.write(row, 1, source_count, cell_format)
+                        distinct_sheet.write(row, 2, target_count, cell_format)
+                        distinct_sheet.write(row, 3, count_match, pass_format if count_match == 'Pass' else fail_format)
+                        distinct_sheet.write(row, 4, values_match, pass_format if values_match == 'Pass' else fail_format)
+                        distinct_sheet.write(row, 5, source_display, cell_format)
+                        distinct_sheet.write(row, 6, target_display, cell_format)
+                        row += 1
+                        
                     except Exception as e:
                         logger.error(f"Error processing column {col}: {str(e)}")
                         continue
                 
                 # Write message if no columns processed
-                if row_idx == 2:
-                    distinct_sheet.cell(row=2, column=1, value='No non-numeric columns found')
+                if row == 1:
+                    distinct_sheet.write(1, 0, 'No non-numeric columns found', cell_format)
                 
-                # Adjust column widths
-                for col_idx in range(1, len(headers) + 1):
-                    distinct_sheet.column_dimensions[get_column_letter(col_idx)].width = 20
+                # Auto-adjust column widths
+                for col in range(len(headers)):
+                    max_length = 20  # Default width
+                    distinct_sheet.set_column(col, col, max_length)
                 
             logger.info(f"Enhanced regression report generated: {report_path}")
             return str(report_path)
