@@ -221,56 +221,56 @@ class ReportGenerator:
             if not join_columns or not isinstance(join_columns, list):
                 raise ValueError("join_columns must be a non-empty list")
 
-            try:
-                logger.info(f"Source columns: {list(source_df.columns)}")
-                logger.info(f"Target columns: {list(target_df.columns)}")
-                logger.info(f"Join columns requested: {join_columns}")
-                
-                # Case-insensitive column mapping
-                source_cols_lower = {col.lower(): col for col in source_df.columns}
-                target_cols_lower = {col.lower(): col for col in target_df.columns}
-                
-                logger.info(f"Source columns (lowercase): {list(source_cols_lower.keys())}")
-                logger.info(f"Target columns (lowercase): {list(target_cols_lower.keys())}")
-                
-                # Create mapping for join columns
-                join_col_mapping = {}
-                missing_in_source = []
-                missing_in_target = []
-                
-                for join_col in join_columns:
-                    try:
-                        join_col_lower = join_col.lower()
-                        logger.info(f"Processing join column: {join_col} (lowercase: {join_col_lower})")
-                        
-                        # Find matching source column
-                        source_match = source_cols_lower.get(join_col_lower)
-                        if not source_match:
-                            logger.warning(f"Join column {join_col} not found in source columns")
-                            missing_in_source.append(join_col)
-                            continue
-                        
-                        # Find matching target column
-                        target_match = target_cols_lower.get(join_col_lower)
-                        if not target_match:
-                            logger.warning(f"Join column {join_col} not found in target columns")
-                            missing_in_target.append(join_col)
-                            continue
-                        
-                        logger.info(f"Mapped {join_col}: source={source_match}, target={target_match}")
-                        join_col_mapping[source_match] = target_match
-                        
-                    except Exception as col_error:
-                        logger.error(f"Error processing join column {join_col}: {str(col_error)}")
-                        raise ValueError(f"Error processing join column {join_col}: {str(col_error)}")
+            logger.info(f"Source columns: {list(source_df.columns)}")
+            logger.info(f"Target columns: {list(target_df.columns)}")
+            logger.info(f"Join columns requested: {join_columns}")
             
-            if missing_in_source or missing_in_target:
-                error_msg = []
-                if missing_in_source:
-                    error_msg.append(f"Join columns missing in source: {', '.join(missing_in_source)}")
-                if missing_in_target:
-                    error_msg.append(f"Join columns missing in target: {', '.join(missing_in_target)}")
-                raise ValueError('\n'.join(error_msg))
+            # Case-insensitive column mapping
+            source_cols_lower = {col.lower(): col for col in source_df.columns}
+            target_cols_lower = {col.lower(): col for col in target_df.columns}
+            
+            logger.info(f"Source columns (lowercase): {list(source_cols_lower.keys())}")
+            logger.info(f"Target columns (lowercase): {list(target_cols_lower.keys())}")
+            
+            # Create mapping for join columns
+            join_col_mapping = {}
+            missing_in_source = []
+            missing_in_target = []
+            
+            try:
+                for join_col in join_columns:
+                    join_col_lower = join_col.lower()
+                    logger.info(f"Processing join column: {join_col} (lowercase: {join_col_lower})")
+                    
+                    # Find matching source column
+                    source_match = source_cols_lower.get(join_col_lower)
+                    if not source_match:
+                        logger.warning(f"Join column {join_col} not found in source columns")
+                        missing_in_source.append(join_col)
+                        continue
+                    
+                    # Find matching target column
+                    target_match = target_cols_lower.get(join_col_lower)
+                    if not target_match:
+                        logger.warning(f"Join column {join_col} not found in target columns")
+                        missing_in_target.append(join_col)
+                        continue
+                    
+                    logger.info(f"Mapped {join_col}: source={source_match}, target={target_match}")
+                    join_col_mapping[source_match] = target_match
+                
+                # Check for missing columns after processing all join columns
+                if missing_in_source or missing_in_target:
+                    error_msg = []
+                    if missing_in_source:
+                        error_msg.append(f"Join columns missing in source: {', '.join(missing_in_source)}")
+                    if missing_in_target:
+                        error_msg.append(f"Join columns missing in target: {', '.join(missing_in_target)}")
+                    raise ValueError('\n'.join(error_msg))
+                    
+            except Exception as e:
+                logger.error(f"Error during column mapping: {str(e)}")
+                raise ValueError(f"Failed to process join columns: {str(e)}")
             
             # Rename target columns to match source for merging
             target_df_renamed = target_df.copy()
