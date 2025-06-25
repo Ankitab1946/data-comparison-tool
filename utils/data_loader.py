@@ -39,96 +39,106 @@ class DataLoader:
             logger.info(f"Starting to read file: {file_path}")
             file_size = os.path.getsize(file_path)
             logger.info(f"File size: {file_size / (1024*1024):.2f} MB")
-            
-            # First try to detect the encoding
+
+            # Read the file in binary mode
+            logger.info("Reading file in binary mode")
+            with open(file_path, 'rb') as f:
+                content = f.read()
+                
+            # Try to detect the encoding
             import chardet
+            result = chardet.detect(content)
+            detected_encoding = result['encoding']
+            logger.info(f"Detected encoding: {detected_encoding} (confidence: {result['confidence']})")
             
-            # Read a sample of the file for encoding detection
-            sample_size = min(file_size, 1024 * 1024)  # Read up to 1MB for detection
-            with open(file_path, 'rb') as file:
-                raw_data = file.read(sample_size)
-            detected = chardet.detect(raw_data)
-            detected_encoding = detected['encoding']
-            logger.info(f"Detected encoding: {detected_encoding} (confidence: {detected['confidence']})")
+            # Try different approaches to clean and read the content
+            errors = []
             
-            # List of encodings to try, starting with detected encoding
-            encodings = []
+            # Approach 1: Try with detected encoding
             if detected_encoding:
-                encodings.append(detected_encoding)
-            encodings.extend(['utf-8', 'latin1', 'iso-8859-1', 'cp1252', 'utf-16', 'ascii'])
+                try:
+                    logger.info(f"Attempting to read with detected encoding: {detected_encoding}")
+                    cleaned_content = content.decode(detected_encoding, errors='replace').encode(detected_encoding)
+                    result = self._read_cleaned_content(cleaned_content, delimiter, **kwargs)
+                    if result is not None:
+                        return result
+                except Exception as e:
+                    errors.append(f"Detected encoding failed: {str(e)}")
             
-            # Remove duplicates while preserving order
-            encodings = list(dict.fromkeys(encodings))
-            
-            last_error = None
+            # Approach 2: Try with common encodings
+            encodings = ['utf-8', 'latin1', 'iso-8859-1', 'cp1252', 'utf-16']
             for encoding in encodings:
                 try:
-                    logger.info(f"Attempting to read file with {encoding} encoding")
-                    read_kwargs = {
-                        'delimiter': delimiter,
-                        'encoding': encoding,
-                        'on_bad_lines': 'skip',  # Changed from 'warn' to 'skip'
-                        'low_memory': False,
-                        'encoding_errors': 'ignore',  # Added to handle encoding errors
-                        **kwargs
-                    }
-                    
-                    if file_size > LARGE_FILE_THRESHOLD:
-                        logger.info("Large file detected, reading in chunks...")
-                        chunks = []
-                        chunk_count = 0
-                        for chunk in pd.read_csv(file_path, chunksize=CHUNK_SIZE, **read_kwargs):
-                            chunks.append(chunk)
-                            chunk_count += 1
-                            logger.info(f"Processed chunk {chunk_count}")
-                        result = pd.concat(chunks, ignore_index=True)
-                    else:
-                        result = pd.read_csv(file_path, **read_kwargs)
-                    
-                    if not result.empty:
-                        logger.info(f"File successfully read with {encoding} encoding. Total rows: {len(result)}")
+                    logger.info(f"Attempting to read with {encoding} encoding")
+                    cleaned_content = content.decode(encoding, errors='replace').encode(encoding)
+                    result = self._read_cleaned_content(cleaned_content, delimiter, **kwargs)
+                    if result is not None:
                         return result
-                    else:
-                        logger.warning(f"File read with {encoding} encoding but no data was found")
-                        continue
-                        
-                except UnicodeDecodeError as e:
-                    logger.warning(f"Failed to read with {encoding} encoding: {str(e)}")
-                    last_error = e
-                    continue
                 except Exception as e:
-                    logger.error(f"Error reading file with {encoding} encoding: {str(e)}")
-                    last_error = e
-                    continue
+                    errors.append(f"{encoding} encoding failed: {str(e)}")
             
-            # If all encodings fail, try raw binary read as last resort
+            # Approach 3: Last resort - force ASCII
             try:
-                logger.info("Attempting raw binary read")
-                with open(file_path, 'rb') as f:
-                    content = f.read()
-                    # Try to clean the content
-                    cleaned_content = content.decode('ascii', errors='ignore').encode('ascii')
-                    import io
-                    result = pd.read_csv(io.BytesIO(cleaned_content), 
-                                       delimiter=delimiter,
-                                       on_bad_lines='skip',
-                                       encoding_errors='ignore',
-                                       low_memory=False,
-                                       **kwargs)
-                
-                if not result.empty:
-                    logger.info(f"File successfully read in binary mode. Total rows: {len(result)}")
+                logger.info("Attempting forced ASCII conversion")
+                cleaned_content = content.decode('ascii', errors='replace').encode('ascii')
+                result = self._read_cleaned_content(cleaned_content, delimiter, **kwargs)
+                if result is not None:
                     return result
-                else:
-                    raise ValueError("File was read but no data was found")
-                    
             except Exception as e:
-                logger.error(f"Failed binary read attempt: {str(e)}")
-                raise ValueError(f"Unable to read file with any supported encoding. Last error: {str(last_error)}")
-                
+                errors.append(f"ASCII conversion failed: {str(e)}")
+            
+            # If all attempts failed, raise error with details
+            error_msg = "\n".join(errors)
+            raise ValueError(f"Unable to read file with any method. Errors:\n{error_msg}")
+            
         except Exception as e:
             logger.error(f"Error reading file {file_path}: {str(e)}")
             raise
+
+    def _read_cleaned_content(self, content: bytes, delimiter: str, **kwargs) -> Optional[pd.DataFrame]:
+        """Helper method to read cleaned content into DataFrame."""
+        try:
+            import io
+            data = io.BytesIO(content)
+            
+            read_kwargs = {
+                'delimiter': delimiter,
+                'encoding': 'ascii',
+                'on_bad_lines': 'skip',
+                'low_memory': False,
+                'encoding_errors': 'replace',
+                **kwargs
+            }
+            
+            # Try to read a small sample first
+            sample = pd.read_csv(data, nrows=5, **read_kwargs)
+            if sample.empty:
+                return None
+            
+            # Reset buffer position
+            data.seek(0)
+            
+            # Read full content
+            if len(content) > CHUNK_SIZE:
+                chunks = []
+                chunk_count = 0
+                for chunk in pd.read_csv(data, chunksize=CHUNK_SIZE, **read_kwargs):
+                    chunks.append(chunk)
+                    chunk_count += 1
+                    logger.info(f"Processed chunk {chunk_count}")
+                result = pd.concat(chunks, ignore_index=True)
+            else:
+                result = pd.read_csv(data, **read_kwargs)
+            
+            if not result.empty:
+                logger.info(f"Successfully read file. Total rows: {len(result)}")
+                return result
+            
+            return None
+            
+        except Exception as e:
+            logger.warning(f"Error reading cleaned content: {str(e)}")
+            return None
 
     @staticmethod
     def read_parquet(file_path: str) -> pd.DataFrame:
