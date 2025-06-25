@@ -829,18 +829,36 @@ SELECT * FROM data WHERE amount > 1000 AND status = 'active'
                 preview_col1, preview_col2 = st.columns(2)
                 
                 with preview_col1:
-                    st.markdown("#### Filtered Source Data")
-                    if 'filtered_source' in st.session_state:
-                        st.dataframe(st.session_state.filtered_source.head(10))
-                    elif source_query:
-                        st.info("No data matches the source query")
+                    st.markdown("#### Source Data")
+                    if source_query:
+                        if 'filtered_source' in st.session_state:
+                            filtered_df = st.session_state['filtered_source']
+                            if not filtered_df.empty:
+                                st.write(f"Showing {len(filtered_df)} rows")
+                                st.dataframe(filtered_df.head(10))
+                            else:
+                                st.warning("Query returned no results")
+                        else:
+                            st.info("Execute comparison to see filtered data")
+                    else:
+                        st.write("Original source data")
+                        st.dataframe(source_df.head(10))
                 
                 with preview_col2:
-                    st.markdown("#### Filtered Target Data")
-                    if 'filtered_target' in st.session_state:
-                        st.dataframe(st.session_state.filtered_target.head(10))
-                    elif target_query:
-                        st.info("No data matches the target query")
+                    st.markdown("#### Target Data")
+                    if target_query:
+                        if 'filtered_target' in st.session_state:
+                            filtered_df = st.session_state['filtered_target']
+                            if not filtered_df.empty:
+                                st.write(f"Showing {len(filtered_df)} rows")
+                                st.dataframe(filtered_df.head(10))
+                            else:
+                                st.warning("Query returned no results")
+                        else:
+                            st.info("Execute comparison to see filtered data")
+                    else:
+                        st.write("Original target data")
+                        st.dataframe(target_df.head(10))
             
             # Compare button
             if st.button("Compare"):
