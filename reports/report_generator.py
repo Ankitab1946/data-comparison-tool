@@ -372,26 +372,23 @@ class ReportGenerator:
             logger.info(f"Target columns: {list(target_df.columns)}")
             logger.info(f"Join columns: {join_columns}")
 
-            # Create case-insensitive column maps
-            source_cols = {col.strip().lower(): col for col in source_df.columns}
-            target_cols = {col.strip().lower(): col for col in target_df.columns}
+            # Normalize column names to lowercase for comparison
+            source_df.columns = [col.strip().lower() for col in source_df.columns]
+            target_df.columns = [col.strip().lower() for col in target_df.columns]
+            join_columns = [col.strip().lower() for col in join_columns]
             
-            # Map columns
+            # Create column mapping
             join_col_mapping = {}
             missing_cols = []
             
             for col in join_columns:
-                col_lower = col.strip().lower()
-                source_match = source_cols.get(col_lower)
-                target_match = target_cols.get(col_lower)
-                
-                if source_match and target_match:
-                    join_col_mapping[source_match] = target_match
-                    logger.info(f"Mapped: {source_match} -> {target_match}")
+                if col in source_df.columns and col in target_df.columns:
+                    join_col_mapping[col] = col
+                    logger.info(f"Mapped: {col} -> {col}")
                 else:
-                    if not source_match:
+                    if col not in source_df.columns:
                         missing_cols.append(f"'{col}' (in source)")
-                    if not target_match:
+                    if col not in target_df.columns:
                         missing_cols.append(f"'{col}' (in target)")
 
             if missing_cols:
@@ -515,8 +512,47 @@ class ReportGenerator:
                 # If there are no differences
                 if not dfs_to_process:
                     logger.info("No differences found between source and target")
-                    with open(report_path, 'w') as f:
-                        f.write("No differences found between source and target datasets.")
+                    
+                    # Create Excel file with summary only
+                    with pd.ExcelWriter(str(report_path), engine='xlsxwriter') as writer:
+                        # Create summary sheet
+                        summary_sheet = writer.book.add_worksheet('Summary')
+                        
+                        # Create formats
+                        header_format = writer.book.add_format({
+                            'bold': True,
+                            'font_size': 12,
+                            'bg_color': '#D3D3D3',
+                            'border': 1,
+                            'align': 'center',
+                            'valign': 'vcenter'
+                        })
+                        
+                        cell_format = writer.book.add_format({
+                            'font_size': 11,
+                            'border': 1,
+                            'align': 'left',
+                            'valign': 'vcenter'
+                        })
+                        
+                        # Write summary information
+                        summary_sheet.merge_range('A1:B1', 'Comparison Results', header_format)
+                        summary_sheet.write(2, 0, 'Status:', cell_format)
+                        summary_sheet.write(2, 1, 'No differences found', cell_format)
+                        
+                        summary_sheet.write(4, 0, 'Source Records:', cell_format)
+                        summary_sheet.write(4, 1, len(source_df), cell_format)
+                        
+                        summary_sheet.write(5, 0, 'Target Records:', cell_format)
+                        summary_sheet.write(5, 1, len(target_df), cell_format)
+                        
+                        summary_sheet.write(7, 0, 'Join Columns:', cell_format)
+                        summary_sheet.write(7, 1, ', '.join(join_columns), cell_format)
+                        
+                        # Set column widths
+                        summary_sheet.set_column(0, 0, 20)
+                        summary_sheet.set_column(1, 1, 40)
+                    
                     return str(report_path)
                 
                 # Combine all difference chunks
