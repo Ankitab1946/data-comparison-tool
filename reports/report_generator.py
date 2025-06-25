@@ -135,24 +135,107 @@ class ReportGenerator:
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             report_path = self.output_dir / f"regression_report_{timestamp}.xlsx"
             
-            with pd.ExcelWriter(str(report_path), engine='openpyxl') as writer:
-                # 1. Count Check Tab
+            with pd.ExcelWriter(str(report_path), engine='xlsxwriter') as writer:
+                workbook = writer.book
+                
+                # Create formats
+                header_format = workbook.add_format({
+                    'bold': True,
+                    'bg_color': '#D3D3D3',
+                    'border': 1,
+                    'align': 'center'
+                })
+                
+                pass_format = workbook.add_format({
+                    'bg_color': '90EE90',  # Light green
+                    'font_color': '006400',  # Dark green
+                    'border': 1
+                })
+                
+                fail_format = workbook.add_format({
+                    'bg_color': 'FFB6C1',  # Light pink
+                    'font_color': '8B0000',  # Dark red
+                    'border': 1
+                })
+                
+                cell_format = workbook.add_format({
+                    'border': 1
+                })
+                # 1. Null Check Tab
+                null_sheet = workbook.add_worksheet('NullCheck')
+                
+                # Write headers
+                headers = ['Column', 'Source Null Count', 'Target Null Count', 'Difference', 'Status']
+                for col, header in enumerate(headers):
+                    null_sheet.write(0, col, header, header_format)
+                
+                row = 1
+                for column in source_df.columns:
+                    source_nulls = source_df[column].isnull().sum()
+                    target_nulls = target_df[column].isnull().sum() if column in target_df.columns else 0
+                    difference = abs(source_nulls - target_nulls)
+                    status = 'Pass' if difference == 0 else 'Fail'
+                    
+                    null_sheet.write(row, 0, column, cell_format)
+                    null_sheet.write(row, 1, source_nulls, cell_format)
+                    null_sheet.write(row, 2, target_nulls, cell_format)
+                    null_sheet.write(row, 3, difference, cell_format)
+                    null_sheet.write(row, 4, status, pass_format if status == 'Pass' else fail_format)
+                    row += 1
+                
+                # Auto-adjust column widths
+                for col in range(len(headers)):
+                    null_sheet.set_column(col, col, 15)
+                
+                # 2. String Hash Check Tab
+                hash_sheet = workbook.add_worksheet('StringHashCheck')
+                
+                # Write headers
+                headers = ['Column', 'Source Hash', 'Target Hash', 'Match']
+                for col, header in enumerate(headers):
+                    hash_sheet.write(0, col, header, header_format)
+                
+                row = 1
+                for column in source_df.select_dtypes(include=['object']).columns:
+                    if column in target_df.columns:
+                        source_hash = pd.util.hash_pandas_object(source_df[column]).sum()
+                        target_hash = pd.util.hash_pandas_object(target_df[column]).sum()
+                        match = 'Pass' if source_hash == target_hash else 'Fail'
+                        
+                        hash_sheet.write(row, 0, column, cell_format)
+                        hash_sheet.write(row, 1, str(source_hash), cell_format)
+                        hash_sheet.write(row, 2, str(target_hash), cell_format)
+                        hash_sheet.write(row, 3, match, pass_format if match == 'Pass' else fail_format)
+                        row += 1
+                
+                # Auto-adjust column widths
+                for col in range(len(headers)):
+                    hash_sheet.set_column(col, col, 20)
+                
+                # 3. Count Check Tab
+                count_sheet = workbook.add_worksheet('CountCheck')
+                
+                # Write headers
+                headers = ['Metric', 'Value', 'Result']
+                for col, header in enumerate(headers):
+                    count_sheet.write(0, col, header, header_format)
+                
+                # Write data
                 source_count = len(source_df)
                 target_count = len(target_df)
-                count_data = {
-                    'Metric': ['Source Count', 'Target Count'],
-                    'Value': [source_count, target_count],
-                    'Result': ['Pass' if source_count == target_count else 'Fail',
-                             'Pass' if source_count == target_count else 'Fail']
-                }
-                count_df = pd.DataFrame(count_data)
-                count_df.to_excel(writer, sheet_name='CountCheck', index=False)
+                match = source_count == target_count
                 
-                # Apply conditional formatting
-                count_sheet = writer.sheets['CountCheck']
-                for idx, result in enumerate(count_df['Result'], start=2):
-                    cell = count_sheet.cell(row=idx, column=3)
-                    self._style_excel_cell(cell, result.lower() == 'pass')
+                count_sheet.write(1, 0, 'Source Count', cell_format)
+                count_sheet.write(1, 1, source_count, cell_format)
+                count_sheet.write(1, 2, 'Pass' if match else 'Fail', pass_format if match else fail_format)
+                
+                count_sheet.write(2, 0, 'Target Count', cell_format)
+                count_sheet.write(2, 1, target_count, cell_format)
+                count_sheet.write(2, 2, 'Pass' if match else 'Fail', pass_format if match else fail_format)
+                
+                # Auto-adjust column widths
+                for col in range(len(headers)):
+                    count_sheet.set_column(col, col, 15)
 
                 # 2. Aggregation Check Tab
                 # Get numeric columns from both dataframes
@@ -564,8 +647,38 @@ class ReportGenerator:
                     'Left Only': 'FFB6C1',   # Light pink
                     'Inserted': '90EE90',    # Light green
                     'Right Only': '90EE90',  # Light green
-                    'Updated': 'FFD700'      # Gold
+                    'Updated': 'FFD700',     # Gold
+                    'Modified': 'FFFF00'     # Yellow
                 }
+                
+                # Create side-by-side comparison
+                comparison_data = []
+                for _, row in merged.iterrows():
+                    status = row['Status']
+                    source_data = {}
+                    target_data = {}
+                    
+                    # Add all columns to both source and target
+                    for col in source_df.columns:
+                        source_col = col
+                        target_col = col + '_target' if col in target_df.columns else None
+                        
+                        source_val = row.get(source_col)
+                        target_val = row.get(target_col) if target_col else None
+                        
+                        # Check if values are different
+                        is_modified = (source_val != target_val) if target_val is not None else False
+                        
+                        comparison_data.append({
+                            'Column': col,
+                            'Source Value': source_val,
+                            'Target Value': target_val,
+                            'Status': status,
+                            'Modified': is_modified
+                        })
+                
+                # Create side-by-side comparison DataFrame
+                comparison_df = pd.DataFrame(comparison_data)
                 
                 # Calculate number of chunks needed
                 total_rows = len(merged)
