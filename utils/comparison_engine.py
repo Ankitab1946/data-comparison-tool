@@ -2074,40 +2074,36 @@ class ComparisonEngine:
             from reports.report_generator import ReportGenerator
             report_gen = ReportGenerator()
             
-            # Apply queries if provided and store filtered data
-            filtered_source = None
-            filtered_target = None
-            
+            # Apply queries if provided
             if source_query:
                 try:
                     # Handle TOP/LIMIT in query
                     query = source_query.replace('top', 'limit', flags=re.IGNORECASE)
                     filtered_source = report_gen.execute_query(source, query)
-                    if filtered_source.empty:
-                        raise ValueError("Source query returned no results")
-                    source = filtered_source  # Update source with filtered data
+                    if filtered_source is not None:
+                        source = filtered_source  # Update source with filtered data
+                        import streamlit as st
+                        st.session_state['filtered_source'] = filtered_source
                 except Exception as e:
                     logger.error(f"Error executing source query: {str(e)}")
-                    raise ValueError(f"Source query failed: {str(e)}")
+                    import streamlit as st
+                    st.error(f"Source query failed: {str(e)}")
+                    return None
             
             if target_query:
                 try:
                     # Handle TOP/LIMIT in query
                     query = target_query.replace('top', 'limit', flags=re.IGNORECASE)
                     filtered_target = report_gen.execute_query(target, query)
-                    if filtered_target.empty:
-                        raise ValueError("Target query returned no results")
-                    target = filtered_target  # Update target with filtered data
+                    if filtered_target is not None:
+                        target = filtered_target  # Update target with filtered data
+                        import streamlit as st
+                        st.session_state['filtered_target'] = filtered_target
                 except Exception as e:
                     logger.error(f"Error executing target query: {str(e)}")
-                    raise ValueError(f"Target query failed: {str(e)}")
-                    
-            # Store filtered data in session state for UI display
-            import streamlit as st
-            if filtered_source is not None:
-                st.session_state.filtered_source = filtered_source
-            if filtered_target is not None:
-                st.session_state.filtered_target = filtered_target
+                    import streamlit as st
+                    st.error(f"Target query failed: {str(e)}")
+                    return None
             
             # Initialize comparison results with optimized data handling
             try:
