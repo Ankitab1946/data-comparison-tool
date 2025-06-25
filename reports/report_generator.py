@@ -221,31 +221,48 @@ class ReportGenerator:
             if not join_columns or not isinstance(join_columns, list):
                 raise ValueError("join_columns must be a non-empty list")
 
-            # Case-insensitive column mapping
-            source_cols_lower = {col.lower(): col for col in source_df.columns}
-            target_cols_lower = {col.lower(): col for col in target_df.columns}
-            
-            # Create mapping for join columns
-            join_col_mapping = {}
-            missing_in_source = []
-            missing_in_target = []
-            
-            for join_col in join_columns:
-                join_col_lower = join_col.lower()
+            try:
+                logger.info(f"Source columns: {list(source_df.columns)}")
+                logger.info(f"Target columns: {list(target_df.columns)}")
+                logger.info(f"Join columns requested: {join_columns}")
                 
-                # Find matching source column
-                source_match = source_cols_lower.get(join_col_lower)
-                if not source_match:
-                    missing_in_source.append(join_col)
-                    continue
+                # Case-insensitive column mapping
+                source_cols_lower = {col.lower(): col for col in source_df.columns}
+                target_cols_lower = {col.lower(): col for col in target_df.columns}
                 
-                # Find matching target column
-                target_match = target_cols_lower.get(join_col_lower)
-                if not target_match:
-                    missing_in_target.append(join_col)
-                    continue
+                logger.info(f"Source columns (lowercase): {list(source_cols_lower.keys())}")
+                logger.info(f"Target columns (lowercase): {list(target_cols_lower.keys())}")
                 
-                join_col_mapping[source_match] = target_match
+                # Create mapping for join columns
+                join_col_mapping = {}
+                missing_in_source = []
+                missing_in_target = []
+                
+                for join_col in join_columns:
+                    try:
+                        join_col_lower = join_col.lower()
+                        logger.info(f"Processing join column: {join_col} (lowercase: {join_col_lower})")
+                        
+                        # Find matching source column
+                        source_match = source_cols_lower.get(join_col_lower)
+                        if not source_match:
+                            logger.warning(f"Join column {join_col} not found in source columns")
+                            missing_in_source.append(join_col)
+                            continue
+                        
+                        # Find matching target column
+                        target_match = target_cols_lower.get(join_col_lower)
+                        if not target_match:
+                            logger.warning(f"Join column {join_col} not found in target columns")
+                            missing_in_target.append(join_col)
+                            continue
+                        
+                        logger.info(f"Mapped {join_col}: source={source_match}, target={target_match}")
+                        join_col_mapping[source_match] = target_match
+                        
+                    except Exception as col_error:
+                        logger.error(f"Error processing join column {join_col}: {str(col_error)}")
+                        raise ValueError(f"Error processing join column {join_col}: {str(col_error)}")
             
             if missing_in_source or missing_in_target:
                 error_msg = []
@@ -289,14 +306,37 @@ class ReportGenerator:
                     # Get chunks of both dataframes
                     source_chunk = source_df.iloc[start_idx:start_idx + CHUNK_SIZE]
                     
-                    # Find corresponding rows in target using join columns with renamed columns
-                    chunk_merged = source_chunk.merge(
-                        target_df_renamed, 
-                        on=join_columns, 
-                        how='outer', 
-                        indicator=True,
-                        suffixes=('_source', '_target')
-                    )
+                    try:
+                        logger.info(f"Processing chunk {chunk_idx + 1} of {num_chunks}")
+                        logger.info(f"Join columns for merge: {join_columns}")
+                        logger.info(f"Source chunk columns: {list(source_chunk.columns)}")
+                        logger.info(f"Target renamed columns: {list(target_df_renamed.columns)}")
+                        
+                        # Verify join columns exist in both dataframes before merge
+                        missing_cols = []
+                        for col in join_columns:
+                            if col not in source_chunk.columns:
+                                missing_cols.append(f"{col} (in source)")
+                            if col not in target_df_renamed.columns:
+                                missing_cols.append(f"{col} (in target)")
+                        
+                        if missing_cols:
+                            raise ValueError(f"Missing columns for merge: {', '.join(missing_cols)}")
+                        
+                        # Find corresponding rows in target using join columns with renamed columns
+                        chunk_merged = source_chunk.merge(
+                            target_df_renamed, 
+                            on=join_columns, 
+                            how='outer', 
+                            indicator=True,
+                            suffixes=('_source', '_target')
+                        )
+                        
+                        logger.info(f"Merge successful. Result shape: {chunk_merged.shape}")
+                        
+                    except Exception as merge_error:
+                        logger.error(f"Error during merge operation: {str(merge_error)}")
+                        raise ValueError(f"Failed to merge data: {str(merge_error)}")
                     
                     # Create comparison status column
                     chunk_merged['Status'] = chunk_merged['_merge'].map({
