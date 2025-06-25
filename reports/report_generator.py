@@ -521,8 +521,8 @@ class ReportGenerator:
                 logger.error(f"Error processing difference chunks: {str(e)}")
                 raise ValueError(f"Failed to process difference data: {str(e)}")
             
-            # Save to Excel with formatting, splitting into multiple sheets if necessary
-            with pd.ExcelWriter(str(report_path), engine='openpyxl') as writer:
+            # Save to Excel with xlsxwriter engine for better compatibility
+            with pd.ExcelWriter(str(report_path), engine='xlsxwriter') as writer:
                 for chunk_idx in range(num_chunks):
                     try:
                         start_idx = chunk_idx * CHUNK_SIZE
@@ -540,71 +540,95 @@ class ReportGenerator:
                         # Write chunk to Excel
                         chunk.to_excel(writer, sheet_name=sheet_name, index=False)
                         
-                        # Apply conditional formatting to chunk
+                        # Get worksheet and create formats
                         worksheet = writer.sheets[sheet_name]
+                        workbook = writer.book
                         
-                        # Apply formatting based on status
+                        # Create formats for different statuses
+                        formats = {
+                            status: workbook.add_format({
+                                'bg_color': color,
+                                'border': 1
+                            }) for status, color in status_colors.items()
+                        }
+                        
+                        # Find Status column index
                         status_col_idx = None
-                        for idx, col in enumerate(chunk.columns, start=1):
+                        for idx, col in enumerate(chunk.columns):
                             if col == 'Status':
                                 status_col_idx = idx
                                 break
                         
                         if status_col_idx is not None:
-                            for idx, status in enumerate(chunk['Status'], start=2):
-                                cell = worksheet.cell(row=idx, column=status_col_idx)
-                                cell.fill = PatternFill(
-                                    start_color=status_colors.get(status, 'FFFFFF'),
-                                    end_color=status_colors.get(status, 'FFFFFF'),
-                                    fill_type='solid'
-                                )
+                            # Apply conditional formatting based on status
+                            for row_idx, status in enumerate(chunk['Status'], start=1):
+                                worksheet.write(row_idx, status_col_idx, status, formats.get(status))
                         
                         # Add summary at top of each sheet
                         summary_data = chunk['Status'].value_counts().to_dict()
                         summary_col = len(chunk.columns) + 2
-                        worksheet.cell(row=1, column=summary_col, value="Summary:")
-                        for i, (status, count) in enumerate(summary_data.items(), start=2):
-                            worksheet.cell(row=i, column=summary_col, value=f"{status}: {count}")
+                        
+                        # Create header format
+                        header_format = workbook.add_format({
+                            'bold': True,
+                            'font_size': 11,
+                            'border': 1
+                        })
+                        
+                        # Write summary
+                        worksheet.write(0, summary_col, "Summary:", header_format)
+                        for i, (status, count) in enumerate(summary_data.items()):
+                            worksheet.write(i + 1, summary_col, f"{status}: {count}", formats.get(status))
+                            
+                        # Auto-adjust column widths
+                        for col_num, value in enumerate(chunk.columns.values):
+                            max_length = max(
+                                chunk[value].astype(str).str.len().max(),
+                                len(str(value))
+                            )
+                            worksheet.set_column(col_num, col_num, min(max_length + 2, 50))
                             
                     except Exception as sheet_error:
                         logger.error(f"Error writing sheet {sheet_name}: {str(sheet_error)}")
                         continue
                 
                 try:
-                    # Add summary sheet with error handling
-                    summary_data = {
-                        'Description': [
-                            'Total Rows',
-                            'Number of Sheets',
-                            'Rows per Sheet',
-                            'Deleted Records',
-                            'Inserted Records',
-                            'Updated Records'
-                        ],
-                        'Value': [
-                            total_rows,
-                            num_chunks,
-                            CHUNK_SIZE,
-                            sum(merged['Status'] == 'Deleted'),
-                            sum(merged['Status'] == 'Inserted'),
-                            sum(merged['Status'] == 'Updated')
-                        ]
-                    }
+                    # Create summary sheet
+                    summary_sheet = writer.book.add_worksheet('Summary')
                     
-                    summary_df = pd.DataFrame(summary_data)
-                    summary_df.to_excel(writer, sheet_name='Summary', index=False)
+                    # Create formats
+                    header_format = writer.book.add_format({
+                        'bold': True,
+                        'font_size': 11,
+                        'border': 1,
+                        'bg_color': '#D3D3D3'
+                    })
                     
-                    # Apply formatting to summary sheet
-                    summary_sheet = writer.sheets['Summary']
-                    for col_idx in range(1, 3):  # Format both columns
-                        for row_idx in range(1, len(summary_data['Description']) + 2):
-                            cell = summary_sheet.cell(row=row_idx, column=col_idx)
-                            if row_idx == 1:  # Header row
-                                cell.font = Font(bold=True)
+                    cell_format = writer.book.add_format({
+                        'border': 1
+                    })
                     
-                    # Adjust column widths
-                    for col_idx in range(1, 3):
-                        summary_sheet.column_dimensions[get_column_letter(col_idx)].width = 20
+                    # Write headers
+                    summary_sheet.write(0, 0, 'Description', header_format)
+                    summary_sheet.write(0, 1, 'Value', header_format)
+                    
+                    # Write summary data
+                    summary_data = [
+                        ('Total Rows', total_rows),
+                        ('Number of Sheets', num_chunks),
+                        ('Rows per Sheet', CHUNK_SIZE),
+                        ('Deleted Records', sum(merged['Status'] == 'Deleted')),
+                        ('Inserted Records', sum(merged['Status'] == 'Inserted')),
+                        ('Updated Records', sum(merged['Status'] == 'Updated'))
+                    ]
+                    
+                    for row_idx, (desc, value) in enumerate(summary_data, start=1):
+                        summary_sheet.write(row_idx, 0, desc, cell_format)
+                        summary_sheet.write(row_idx, 1, value, cell_format)
+                    
+                    # Auto-adjust column widths
+                    summary_sheet.set_column(0, 0, 20)  # Description column
+                    summary_sheet.set_column(1, 1, 15)  # Value column
                         
                 except Exception as summary_error:
                     logger.error(f"Error creating summary sheet: {str(summary_error)}")
