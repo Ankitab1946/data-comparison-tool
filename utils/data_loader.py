@@ -40,31 +40,58 @@ class DataLoader:
             file_size = os.path.getsize(file_path)
             logger.info(f"File size: {file_size / (1024*1024):.2f} MB")
             
-            # Try different encodings
-            encodings = ['utf-8', 'latin1', 'iso-8859-1', 'cp1252']
-            last_error = None
+            # First try to detect the encoding
+            import chardet
             
+            # Read a sample of the file for encoding detection
+            sample_size = min(file_size, 1024 * 1024)  # Read up to 1MB for detection
+            with open(file_path, 'rb') as file:
+                raw_data = file.read(sample_size)
+            detected = chardet.detect(raw_data)
+            detected_encoding = detected['encoding']
+            logger.info(f"Detected encoding: {detected_encoding} (confidence: {detected['confidence']})")
+            
+            # List of encodings to try, starting with detected encoding
+            encodings = []
+            if detected_encoding:
+                encodings.append(detected_encoding)
+            encodings.extend(['utf-8', 'latin1', 'iso-8859-1', 'cp1252', 'utf-16', 'ascii'])
+            
+            # Remove duplicates while preserving order
+            encodings = list(dict.fromkeys(encodings))
+            
+            last_error = None
             for encoding in encodings:
                 try:
                     logger.info(f"Attempting to read file with {encoding} encoding")
+                    read_kwargs = {
+                        'delimiter': delimiter,
+                        'encoding': encoding,
+                        'on_bad_lines': 'skip',  # Changed from 'warn' to 'skip'
+                        'low_memory': False,
+                        'encoding_errors': 'ignore',  # Added to handle encoding errors
+                        **kwargs
+                    }
+                    
                     if file_size > LARGE_FILE_THRESHOLD:
                         logger.info("Large file detected, reading in chunks...")
                         chunks = []
                         chunk_count = 0
-                        for chunk in pd.read_csv(file_path, delimiter=delimiter, encoding=encoding, 
-                                               on_bad_lines='warn', chunksize=CHUNK_SIZE, **kwargs):
+                        for chunk in pd.read_csv(file_path, chunksize=CHUNK_SIZE, **read_kwargs):
                             chunks.append(chunk)
                             chunk_count += 1
                             logger.info(f"Processed chunk {chunk_count}")
-                        
                         result = pd.concat(chunks, ignore_index=True)
                     else:
-                        result = pd.read_csv(file_path, delimiter=delimiter, encoding=encoding, 
-                                          on_bad_lines='warn', **kwargs)
+                        result = pd.read_csv(file_path, **read_kwargs)
                     
-                    logger.info(f"File successfully read with {encoding} encoding. Total rows: {len(result)}")
-                    return result
-                    
+                    if not result.empty:
+                        logger.info(f"File successfully read with {encoding} encoding. Total rows: {len(result)}")
+                        return result
+                    else:
+                        logger.warning(f"File read with {encoding} encoding but no data was found")
+                        continue
+                        
                 except UnicodeDecodeError as e:
                     logger.warning(f"Failed to read with {encoding} encoding: {str(e)}")
                     last_error = e
@@ -74,28 +101,29 @@ class DataLoader:
                     last_error = e
                     continue
             
-            # If all encodings fail, try binary mode as last resort
+            # If all encodings fail, try raw binary read as last resort
             try:
-                logger.info("Attempting to read file in binary mode")
+                logger.info("Attempting raw binary read")
                 with open(file_path, 'rb') as f:
-                    if file_size > LARGE_FILE_THRESHOLD:
-                        chunks = []
-                        chunk_count = 0
-                        for chunk in pd.read_csv(f, delimiter=delimiter, encoding='latin1', 
-                                               on_bad_lines='warn', chunksize=CHUNK_SIZE, **kwargs):
-                            chunks.append(chunk)
-                            chunk_count += 1
-                            logger.info(f"Processed chunk {chunk_count}")
-                        result = pd.concat(chunks, ignore_index=True)
-                    else:
-                        result = pd.read_csv(f, delimiter=delimiter, encoding='latin1', 
-                                          on_bad_lines='warn', **kwargs)
+                    content = f.read()
+                    # Try to clean the content
+                    cleaned_content = content.decode('ascii', errors='ignore').encode('ascii')
+                    import io
+                    result = pd.read_csv(io.BytesIO(cleaned_content), 
+                                       delimiter=delimiter,
+                                       on_bad_lines='skip',
+                                       encoding_errors='ignore',
+                                       low_memory=False,
+                                       **kwargs)
                 
-                logger.info(f"File successfully read in binary mode. Total rows: {len(result)}")
-                return result
-                
+                if not result.empty:
+                    logger.info(f"File successfully read in binary mode. Total rows: {len(result)}")
+                    return result
+                else:
+                    raise ValueError("File was read but no data was found")
+                    
             except Exception as e:
-                logger.error(f"Failed to read file in binary mode: {str(e)}")
+                logger.error(f"Failed binary read attempt: {str(e)}")
                 raise ValueError(f"Unable to read file with any supported encoding. Last error: {str(last_error)}")
                 
         except Exception as e:
