@@ -823,6 +823,25 @@ SELECT column1, column2 FROM data
 SELECT * FROM data WHERE amount > 1000 AND status = 'active'
                     """)
             
+            # Show filtered data preview if queries are applied
+            if enable_query and (source_query or target_query):
+                st.subheader("Filtered Data Preview")
+                preview_col1, preview_col2 = st.columns(2)
+                
+                with preview_col1:
+                    st.markdown("#### Filtered Source Data")
+                    if 'filtered_source' in st.session_state:
+                        st.dataframe(st.session_state.filtered_source.head(10))
+                    elif source_query:
+                        st.info("No data matches the source query")
+                
+                with preview_col2:
+                    st.markdown("#### Filtered Target Data")
+                    if 'filtered_target' in st.session_state:
+                        st.dataframe(st.session_state.filtered_target.head(10))
+                    elif target_query:
+                        st.info("No data matches the target query")
+            
             # Compare button
             if st.button("Compare"):
                 try:
@@ -830,11 +849,21 @@ SELECT * FROM data WHERE amount > 1000 AND status = 'active'
                         # Set mapping in comparison engine
                         engine.set_mapping(st.session_state.column_mapping, join_columns)
                         
-                        # Perform comparison with queries
-                        comparison_results = engine.compare(
-                            source_query=source_query,
-                            target_query=target_query
-                        )
+                        try:
+                            # Perform comparison with queries
+                            comparison_results = engine.compare(
+                                source_query=source_query,
+                                target_query=target_query
+                            )
+                            
+                            # Ensure required keys exist in results
+                            if not all(key in comparison_results for key in ['rows_match', 'columns_match']):
+                                st.error("Invalid comparison results. Missing required information.")
+                                return
+                                
+                        except Exception as e:
+                            st.error(f"Comparison failed: {str(e)}")
+                            return
                         
                         # Generate reports
                         report_gen = ReportGenerator("reports")
