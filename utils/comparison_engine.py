@@ -2053,18 +2053,45 @@ class ComparisonEngine:
         # Return the prepared dataframes
         return source, target
 
-    def compare(self, chunk_size: int = 100000) -> Dict[str, Any]:
+    def compare(self, chunk_size: int = 100000, source_query: str = None, 
+                target_query: str = None) -> Dict[str, Any]:
         """
         Perform the comparison between source and target data.
         
         Args:
             chunk_size: Size of chunks for processing large datasets
+            source_query: Optional SQL-like query to filter source data
+            target_query: Optional SQL-like query to filter target data
             
         Returns:
             Dictionary containing comparison results
         """
         try:
+            # Get initial prepared dataframes
             source, target = self._prepare_dataframes()
+            
+            # Apply queries if provided
+            if source_query:
+                try:
+                    from reports.report_generator import ReportGenerator
+                    report_gen = ReportGenerator()
+                    source = report_gen.execute_query(source, source_query)
+                    if source.empty:
+                        raise ValueError("Source query returned no results")
+                except Exception as e:
+                    logger.error(f"Error executing source query: {str(e)}")
+                    raise ValueError(f"Source query failed: {str(e)}")
+            
+            if target_query:
+                try:
+                    from reports.report_generator import ReportGenerator
+                    report_gen = ReportGenerator()
+                    target = report_gen.execute_query(target, target_query)
+                    if target.empty:
+                        raise ValueError("Target query returned no results")
+                except Exception as e:
+                    logger.error(f"Error executing target query: {str(e)}")
+                    raise ValueError(f"Target query failed: {str(e)}")
             
             # Initialize comparison results with optimized data handling
             try:
