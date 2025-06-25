@@ -272,13 +272,43 @@ class ReportGenerator:
                 logger.error(f"Error during column mapping: {str(e)}")
                 raise ValueError(f"Failed to process join columns: {str(e)}")
             
-            # Rename target columns to match source for merging
-            target_df_renamed = target_df.copy()
-            rename_map = {v: k for k, v in join_col_mapping.items()}
-            target_df_renamed = target_df_renamed.rename(columns=rename_map)
-            
-            # Update join_columns to use source column names
-            join_columns = list(join_col_mapping.keys())
+            try:
+                # Verify we have valid column mappings before proceeding
+                if not join_col_mapping:
+                    raise ValueError("No valid column mappings found between source and target")
+                
+                logger.info("Creating renamed target dataframe for merging")
+                logger.info(f"Original target columns: {list(target_df.columns)}")
+                
+                # Create a copy of target dataframe
+                target_df_renamed = target_df.copy()
+                
+                # Create rename mapping
+                rename_map = {v: k for k, v in join_col_mapping.items()}
+                logger.info(f"Column rename mapping: {rename_map}")
+                
+                # Rename columns
+                target_df_renamed = target_df_renamed.rename(columns=rename_map)
+                logger.info(f"Renamed target columns: {list(target_df_renamed.columns)}")
+                
+                # Update join_columns to use source column names
+                join_columns = list(join_col_mapping.keys())
+                logger.info(f"Updated join columns: {join_columns}")
+                
+                # Verify all necessary columns exist after renaming
+                missing_cols = []
+                for col in join_columns:
+                    if col not in source_df.columns:
+                        missing_cols.append(f"{col} (in source)")
+                    if col not in target_df_renamed.columns:
+                        missing_cols.append(f"{col} (in renamed target)")
+                
+                if missing_cols:
+                    raise ValueError(f"Missing columns after renaming: {', '.join(missing_cols)}")
+                
+            except Exception as e:
+                logger.error(f"Error preparing dataframes for merge: {str(e)}")
+                raise ValueError(f"Failed to prepare data for comparison: {str(e)}")
 
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             report_path = self.output_dir / f"DifferenceReport_{timestamp}.xlsx"
@@ -308,31 +338,47 @@ class ReportGenerator:
                     
                     try:
                         logger.info(f"Processing chunk {chunk_idx + 1} of {num_chunks}")
-                        logger.info(f"Join columns for merge: {join_columns}")
-                        logger.info(f"Source chunk columns: {list(source_chunk.columns)}")
-                        logger.info(f"Target renamed columns: {list(target_df_renamed.columns)}")
                         
-                        # Verify join columns exist in both dataframes before merge
-                        missing_cols = []
+                        # Ensure consistent column names in chunk
+                        source_chunk_cols = set(source_chunk.columns)
+                        target_renamed_cols = set(target_df_renamed.columns)
+                        join_cols_set = set(join_columns)
+                        
+                        logger.info(f"Source chunk columns: {source_chunk_cols}")
+                        logger.info(f"Target renamed columns: {target_renamed_cols}")
+                        logger.info(f"Join columns: {join_cols_set}")
+                        
+                        # Verify all join columns exist in both dataframes
+                        if not join_cols_set.issubset(source_chunk_cols):
+                            missing = join_cols_set - source_chunk_cols
+                            raise ValueError(f"Join columns missing from source: {missing}")
+                            
+                        if not join_cols_set.issubset(target_renamed_cols):
+                            missing = join_cols_set - target_renamed_cols
+                            raise ValueError(f"Join columns missing from target: {missing}")
+                        
+                        # Ensure join columns have the same data type
                         for col in join_columns:
-                            if col not in source_chunk.columns:
-                                missing_cols.append(f"{col} (in source)")
-                            if col not in target_df_renamed.columns:
-                                missing_cols.append(f"{col} (in target)")
+                            source_dtype = str(source_chunk[col].dtype)
+                            target_dtype = str(target_df_renamed[col].dtype)
+                            
+                            if source_dtype != target_dtype:
+                                logger.warning(f"Data type mismatch for column {col}: source={source_dtype}, target={target_dtype}")
+                                # Convert both to string to ensure matching
+                                source_chunk[col] = source_chunk[col].astype(str)
+                                target_df_renamed[col] = target_df_renamed[col].astype(str)
                         
-                        if missing_cols:
-                            raise ValueError(f"Missing columns for merge: {', '.join(missing_cols)}")
-                        
-                        # Find corresponding rows in target using join columns with renamed columns
+                        # Perform the merge
                         chunk_merged = source_chunk.merge(
-                            target_df_renamed, 
-                            on=join_columns, 
-                            how='outer', 
+                            target_df_renamed,
+                            on=join_columns,
+                            how='outer',
                             indicator=True,
                             suffixes=('_source', '_target')
                         )
                         
                         logger.info(f"Merge successful. Result shape: {chunk_merged.shape}")
+                        logger.info(f"Merged columns: {list(chunk_merged.columns)}")
                         
                     except Exception as merge_error:
                         logger.error(f"Error during merge operation: {str(merge_error)}")
