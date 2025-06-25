@@ -18,6 +18,62 @@ class ReportGenerator:
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
         
+    def execute_query(self, df: pd.DataFrame, query: str = None) -> pd.DataFrame:
+        """Execute a SQL-like query on the DataFrame.
+        
+        Args:
+            df: The DataFrame to query
+            query: SQL-like query string (e.g., "SELECT * FROM data WHERE Column > 5")
+                  If None, returns the original DataFrame
+        
+        Returns:
+            Filtered DataFrame based on the query
+        """
+        if not query:
+            return df
+            
+        try:
+            # Parse the query
+            query = query.strip().lower()
+            if not query.startswith("select"):
+                raise ValueError("Query must start with SELECT")
+                
+            # Extract the WHERE clause if it exists
+            where_clause = None
+            if "where" in query:
+                where_parts = query.split("where")
+                if len(where_parts) != 2:
+                    raise ValueError("Invalid WHERE clause")
+                query = where_parts[0]
+                where_clause = where_parts[1].strip()
+            
+            # Extract column names
+            cols_part = query.replace("select", "").strip()
+            if cols_part == "*":
+                selected_cols = df.columns.tolist()
+            else:
+                selected_cols = [col.strip() for col in cols_part.split(",")]
+                
+            # Validate columns exist
+            missing_cols = [col for col in selected_cols if col not in df.columns]
+            if missing_cols:
+                raise ValueError(f"Columns not found: {', '.join(missing_cols)}")
+            
+            result_df = df[selected_cols]
+            
+            # Apply WHERE clause if it exists
+            if where_clause:
+                # Replace column names with df[] notation
+                for col in df.columns:
+                    where_clause = where_clause.replace(col, f"df['{col}']")
+                result_df = result_df[eval(where_clause)]
+            
+            return result_df
+            
+        except Exception as e:
+            logger.error(f"Error executing query: {str(e)}")
+            raise ValueError(f"Query execution failed: {str(e)}")
+        
     def _style_excel_cell(self, cell, is_pass: bool):
         """Apply styling to Excel cell based on pass/fail status."""
         if is_pass:
@@ -77,9 +133,8 @@ class ReportGenerator:
                 # Apply conditional formatting
                 count_sheet = writer.sheets['CountCheck']
                 for idx, result in enumerate(count_df['Result'], start=2):
-                    if result != 'BASELINE':
-                        cell = count_sheet.cell(row=idx, column=3)
-                        self._style_excel_cell(cell, result == 'PASS')
+                    cell = count_sheet.cell(row=idx, column=3)
+                    self._style_excel_cell(cell, result.lower() == 'pass')
 
                 # 2. Aggregation Check Tab
                 # Get numeric columns from both dataframes
@@ -210,12 +265,30 @@ class ReportGenerator:
             raise
 
     def generate_difference_report(self, source_df: pd.DataFrame, target_df: pd.DataFrame, 
-                                 join_columns: List[str]) -> str:
+                                 join_columns: List[str], source_query: str = None, 
+                                 target_query: str = None) -> str:
         """Generate enhanced side-by-side difference report."""
         report_path = None
         try:
             if not isinstance(source_df, pd.DataFrame) or not isinstance(target_df, pd.DataFrame):
                 raise ValueError("Both source and target must be pandas DataFrames")
+                
+            # Execute queries if provided
+            try:
+                if source_query:
+                    logger.info(f"Executing source query: {source_query}")
+                    source_df = self.execute_query(source_df, source_query)
+                    if source_df.empty:
+                        logger.warning("Source query returned no results")
+                
+                if target_query:
+                    logger.info(f"Executing target query: {target_query}")
+                    target_df = self.execute_query(target_df, target_query)
+                    if target_df.empty:
+                        logger.warning("Target query returned no results")
+            except Exception as e:
+                logger.error(f"Error executing queries: {str(e)}")
+                raise ValueError(f"Query execution failed: {str(e)}")
                 
             if source_df.empty or target_df.empty:
                 logger.info("No data to compare in difference report")
@@ -341,14 +414,26 @@ class ReportGenerator:
             # Process data in chunks to avoid memory issues
             dfs_to_process = []
             
-            # Ensure join columns have the same data type in both dataframes
+            # Handle data types for join columns
             for col in join_columns:
                 source_type = source_df[col].dtype
                 target_type = target_df[col].dtype
                 
-                # Convert to string if types don't match
-                if source_type != target_type:
-                    logger.info(f"Converting column {col} to string type for comparison")
+                # Check if either column contains float values
+                is_source_float = source_df[col].apply(lambda x: isinstance(x, float) or (isinstance(x, str) and '.' in x)).any()
+                is_target_float = target_df[col].apply(lambda x: isinstance(x, float) or (isinstance(x, str) and '.' in x)).any()
+                
+                if is_source_float or is_target_float:
+                    # Convert both columns to float
+                    logger.info(f"Converting column {col} to float type")
+                    try:
+                        source_df[col] = pd.to_numeric(source_df[col], errors='coerce')
+                        target_df[col] = pd.to_numeric(target_df[col], errors='coerce')
+                    except Exception as e:
+                        logger.warning(f"Could not convert column {col} to float: {str(e)}")
+                elif source_type != target_type:
+                    # For non-float columns, convert to string if types don't match
+                    logger.info(f"Converting column {col} to string type")
                     source_df[col] = source_df[col].astype(str)
                     target_df[col] = target_df[col].astype(str)
 
