@@ -2070,28 +2070,44 @@ class ComparisonEngine:
             # Get initial prepared dataframes
             source, target = self._prepare_dataframes()
             
-            # Apply queries if provided
+            # Initialize report generator once
+            from reports.report_generator import ReportGenerator
+            report_gen = ReportGenerator()
+            
+            # Apply queries if provided and store filtered data
+            filtered_source = None
+            filtered_target = None
+            
             if source_query:
                 try:
-                    from reports.report_generator import ReportGenerator
-                    report_gen = ReportGenerator()
-                    source = report_gen.execute_query(source, source_query)
-                    if source.empty:
+                    # Handle TOP/LIMIT in query
+                    query = source_query.replace('top', 'limit', flags=re.IGNORECASE)
+                    filtered_source = report_gen.execute_query(source, query)
+                    if filtered_source.empty:
                         raise ValueError("Source query returned no results")
+                    source = filtered_source  # Update source with filtered data
                 except Exception as e:
                     logger.error(f"Error executing source query: {str(e)}")
                     raise ValueError(f"Source query failed: {str(e)}")
             
             if target_query:
                 try:
-                    from reports.report_generator import ReportGenerator
-                    report_gen = ReportGenerator()
-                    target = report_gen.execute_query(target, target_query)
-                    if target.empty:
+                    # Handle TOP/LIMIT in query
+                    query = target_query.replace('top', 'limit', flags=re.IGNORECASE)
+                    filtered_target = report_gen.execute_query(target, query)
+                    if filtered_target.empty:
                         raise ValueError("Target query returned no results")
+                    target = filtered_target  # Update target with filtered data
                 except Exception as e:
                     logger.error(f"Error executing target query: {str(e)}")
                     raise ValueError(f"Target query failed: {str(e)}")
+                    
+            # Store filtered data in session state for UI display
+            import streamlit as st
+            if filtered_source is not None:
+                st.session_state.filtered_source = filtered_source
+            if filtered_target is not None:
+                st.session_state.filtered_target = filtered_target
             
             # Initialize comparison results with optimized data handling
             try:
