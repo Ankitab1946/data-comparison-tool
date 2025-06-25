@@ -637,7 +637,70 @@ class ReportGenerator:
                 # Combine all difference chunks
                 merged = pd.concat(dfs_to_process, ignore_index=True)
                 
-                # Define status colors
+                # Create side-by-side comparison sheet
+                side_by_side_sheet = workbook.add_worksheet('Side by Side')
+                
+                # Define formats
+                header_format = workbook.add_format({
+                    'bold': True,
+                    'bg_color': '#D3D3D3',
+                    'border': 1,
+                    'align': 'center'
+                })
+                
+                modified_format = workbook.add_format({
+                    'bg_color': 'FFFF00',  # Yellow
+                    'border': 1
+                })
+                
+                cell_format = workbook.add_format({
+                    'border': 1
+                })
+                
+                # Write headers
+                headers = ['Column Name', 'Source Value', 'Target Value', 'Status', 'Change Type']
+                for col, header in enumerate(headers):
+                    side_by_side_sheet.write(0, col, header, header_format)
+                
+                # Process each row and column for side-by-side comparison
+                row_idx = 1
+                for _, diff_row in merged.iterrows():
+                    status = diff_row['Status']
+                    
+                    # Process each column in source dataframe
+                    for col in source_df.columns:
+                        source_val = diff_row.get(col)
+                        target_val = diff_row.get(f"{col}_target") if f"{col}_target" in diff_row else None
+                        
+                        # Determine change type
+                        if status == 'Deleted':
+                            change_type = 'Deleted'
+                        elif status == 'Inserted':
+                            change_type = 'Inserted'
+                        else:
+                            if pd.isna(source_val) and pd.isna(target_val):
+                                continue  # Skip if both values are null
+                            elif source_val != target_val:
+                                change_type = 'Modified'
+                            else:
+                                continue  # Skip if values are identical
+                        
+                        # Write the comparison row
+                        side_by_side_sheet.write(row_idx, 0, col, cell_format)
+                        side_by_side_sheet.write(row_idx, 1, str(source_val) if pd.notna(source_val) else '', 
+                                               modified_format if change_type == 'Modified' else cell_format)
+                        side_by_side_sheet.write(row_idx, 2, str(target_val) if pd.notna(target_val) else '', 
+                                               modified_format if change_type == 'Modified' else cell_format)
+                        side_by_side_sheet.write(row_idx, 3, status, cell_format)
+                        side_by_side_sheet.write(row_idx, 4, change_type, cell_format)
+                        
+                        row_idx += 1
+                
+                # Auto-adjust column widths
+                for col in range(len(headers)):
+                    side_by_side_sheet.set_column(col, col, 20)
+                
+                # Define status colors for difference sheets
                 status_colors = {
                     'Deleted': 'FFB6C1',     # Light pink
                     'Left Only': 'FFB6C1',   # Light pink
