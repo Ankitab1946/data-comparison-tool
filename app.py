@@ -778,6 +778,51 @@ def main():
         if len(join_columns) == 0:
             st.warning("Please select at least one join column")
         else:
+            # Query Section (before Compare button)
+            st.markdown("### Data Filtering (Optional)")
+            enable_query = st.checkbox("Enable Data Filtering", help="Filter source or target data before comparison")
+            
+            source_query = None
+            target_query = None
+            
+            if enable_query:
+                query_col1, query_col2 = st.columns(2)
+                with query_col1:
+                    st.markdown("#### Source Data Filter")
+                    source_query = st.text_area(
+                        "SQL Query for Source Data",
+                        placeholder="Example: SELECT * FROM data WHERE amount > 1000",
+                        help="Leave empty to use all data"
+                    )
+                    if source_query:
+                        st.info("✓ Query will be applied to source data")
+                        
+                with query_col2:
+                    st.markdown("#### Target Data Filter")
+                    target_query = st.text_area(
+                        "SQL Query for Target Data",
+                        placeholder="Example: SELECT * FROM data WHERE status = 'active'",
+                        help="Leave empty to use all data"
+                    )
+                    if target_query:
+                        st.info("✓ Query will be applied to target data")
+                
+                # Query Examples
+                with st.expander("Show Query Examples"):
+                    st.code("""
+# Select all records
+SELECT * FROM data
+
+# Filter by column value
+SELECT * FROM data WHERE column_name = 'value'
+
+# Select specific columns
+SELECT column1, column2 FROM data
+
+# Multiple conditions
+SELECT * FROM data WHERE amount > 1000 AND status = 'active'
+                    """)
+            
             # Compare button
             if st.button("Compare"):
                 try:
@@ -785,8 +830,11 @@ def main():
                         # Set mapping in comparison engine
                         engine.set_mapping(st.session_state.column_mapping, join_columns)
                         
-                        # Perform comparison
-                        comparison_results = engine.compare()
+                        # Perform comparison with queries
+                        comparison_results = engine.compare(
+                            source_query=source_query,
+                            target_query=target_query
+                        )
                         
                         # Generate reports
                         report_gen = ReportGenerator("reports")
