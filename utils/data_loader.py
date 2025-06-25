@@ -40,22 +40,63 @@ class DataLoader:
             file_size = os.path.getsize(file_path)
             logger.info(f"File size: {file_size / (1024*1024):.2f} MB")
             
-            if file_size > LARGE_FILE_THRESHOLD:
-                logger.info("Large file detected, reading in chunks...")
-                chunks = []
-                chunk_count = 0
-                for chunk in pd.read_csv(file_path, delimiter=delimiter, chunksize=CHUNK_SIZE, **kwargs):
-                    chunks.append(chunk)
-                    chunk_count += 1
-                    logger.info(f"Processed chunk {chunk_count}")
+            # Try different encodings
+            encodings = ['utf-8', 'latin1', 'iso-8859-1', 'cp1252']
+            last_error = None
+            
+            for encoding in encodings:
+                try:
+                    logger.info(f"Attempting to read file with {encoding} encoding")
+                    if file_size > LARGE_FILE_THRESHOLD:
+                        logger.info("Large file detected, reading in chunks...")
+                        chunks = []
+                        chunk_count = 0
+                        for chunk in pd.read_csv(file_path, delimiter=delimiter, encoding=encoding, 
+                                               on_bad_lines='warn', chunksize=CHUNK_SIZE, **kwargs):
+                            chunks.append(chunk)
+                            chunk_count += 1
+                            logger.info(f"Processed chunk {chunk_count}")
+                        
+                        result = pd.concat(chunks, ignore_index=True)
+                    else:
+                        result = pd.read_csv(file_path, delimiter=delimiter, encoding=encoding, 
+                                          on_bad_lines='warn', **kwargs)
+                    
+                    logger.info(f"File successfully read with {encoding} encoding. Total rows: {len(result)}")
+                    return result
+                    
+                except UnicodeDecodeError as e:
+                    logger.warning(f"Failed to read with {encoding} encoding: {str(e)}")
+                    last_error = e
+                    continue
+                except Exception as e:
+                    logger.error(f"Error reading file with {encoding} encoding: {str(e)}")
+                    last_error = e
+                    continue
+            
+            # If all encodings fail, try binary mode as last resort
+            try:
+                logger.info("Attempting to read file in binary mode")
+                with open(file_path, 'rb') as f:
+                    if file_size > LARGE_FILE_THRESHOLD:
+                        chunks = []
+                        chunk_count = 0
+                        for chunk in pd.read_csv(f, delimiter=delimiter, encoding='latin1', 
+                                               on_bad_lines='warn', chunksize=CHUNK_SIZE, **kwargs):
+                            chunks.append(chunk)
+                            chunk_count += 1
+                            logger.info(f"Processed chunk {chunk_count}")
+                        result = pd.concat(chunks, ignore_index=True)
+                    else:
+                        result = pd.read_csv(f, delimiter=delimiter, encoding='latin1', 
+                                          on_bad_lines='warn', **kwargs)
                 
-                result = pd.concat(chunks, ignore_index=True)
-                logger.info(f"File reading completed. Total rows: {len(result)}")
+                logger.info(f"File successfully read in binary mode. Total rows: {len(result)}")
                 return result
-            else:
-                result = pd.read_csv(file_path, delimiter=delimiter, **kwargs)
-                logger.info(f"File reading completed. Total rows: {len(result)}")
-                return result
+                
+            except Exception as e:
+                logger.error(f"Failed to read file in binary mode: {str(e)}")
+                raise ValueError(f"Unable to read file with any supported encoding. Last error: {str(last_error)}")
                 
         except Exception as e:
             logger.error(f"Error reading file {file_path}: {str(e)}")
