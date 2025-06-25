@@ -221,9 +221,31 @@ class ReportGenerator:
             if not join_columns or not isinstance(join_columns, list):
                 raise ValueError("join_columns must be a non-empty list")
 
-            # Validate join columns exist in both dataframes
-            missing_in_source = [col for col in join_columns if col not in source_df.columns]
-            missing_in_target = [col for col in join_columns if col not in target_df.columns]
+            # Case-insensitive column mapping
+            source_cols_lower = {col.lower(): col for col in source_df.columns}
+            target_cols_lower = {col.lower(): col for col in target_df.columns}
+            
+            # Create mapping for join columns
+            join_col_mapping = {}
+            missing_in_source = []
+            missing_in_target = []
+            
+            for join_col in join_columns:
+                join_col_lower = join_col.lower()
+                
+                # Find matching source column
+                source_match = source_cols_lower.get(join_col_lower)
+                if not source_match:
+                    missing_in_source.append(join_col)
+                    continue
+                
+                # Find matching target column
+                target_match = target_cols_lower.get(join_col_lower)
+                if not target_match:
+                    missing_in_target.append(join_col)
+                    continue
+                
+                join_col_mapping[source_match] = target_match
             
             if missing_in_source or missing_in_target:
                 error_msg = []
@@ -232,6 +254,14 @@ class ReportGenerator:
                 if missing_in_target:
                     error_msg.append(f"Join columns missing in target: {', '.join(missing_in_target)}")
                 raise ValueError('\n'.join(error_msg))
+            
+            # Rename target columns to match source for merging
+            target_df_renamed = target_df.copy()
+            rename_map = {v: k for k, v in join_col_mapping.items()}
+            target_df_renamed = target_df_renamed.rename(columns=rename_map)
+            
+            # Update join_columns to use source column names
+            join_columns = list(join_col_mapping.keys())
 
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             report_path = self.output_dir / f"DifferenceReport_{timestamp}.xlsx"
@@ -259,9 +289,9 @@ class ReportGenerator:
                     # Get chunks of both dataframes
                     source_chunk = source_df.iloc[start_idx:start_idx + CHUNK_SIZE]
                     
-                    # Find corresponding rows in target using join columns
+                    # Find corresponding rows in target using join columns with renamed columns
                     chunk_merged = source_chunk.merge(
-                        target_df, 
+                        target_df_renamed, 
                         on=join_columns, 
                         how='outer', 
                         indicator=True,
