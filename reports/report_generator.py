@@ -37,22 +37,34 @@ class ReportGenerator:
             query = query.strip().lower()
             if not query.startswith("select"):
                 raise ValueError("Query must start with SELECT")
+            
+            # Handle FROM clause
+            if "from" not in query:
+                query = query.replace("where", "FROM data WHERE")
+                if "where" not in query:
+                    query += " FROM data"
+            
+            # Split query parts
+            parts = query.split("from")
+            if len(parts) != 2:
+                raise ValueError("Invalid query format")
                 
-            # Extract the WHERE clause if it exists
+            select_part = parts[0].replace("select", "").strip()
+            from_part = parts[1].strip()
+            
+            # Extract WHERE clause if it exists
             where_clause = None
-            if "where" in query:
-                where_parts = query.split("where")
-                if len(where_parts) != 2:
+            if "where" in from_part:
+                from_parts = from_part.split("where")
+                if len(from_parts) != 2:
                     raise ValueError("Invalid WHERE clause")
-                query = where_parts[0]
-                where_clause = where_parts[1].strip()
+                where_clause = from_parts[1].strip()
             
             # Extract column names
-            cols_part = query.replace("select", "").strip()
-            if cols_part == "*":
+            if select_part == "*":
                 selected_cols = df.columns.tolist()
             else:
-                selected_cols = [col.strip() for col in cols_part.split(",")]
+                selected_cols = [col.strip() for col in select_part.split(",")]
                 
             # Validate columns exist
             missing_cols = [col for col in selected_cols if col not in df.columns]
@@ -66,7 +78,13 @@ class ReportGenerator:
                 # Replace column names with df[] notation
                 for col in df.columns:
                     where_clause = where_clause.replace(col, f"df['{col}']")
-                result_df = result_df[eval(where_clause)]
+                try:
+                    result_df = result_df[eval(where_clause)]
+                except Exception as e:
+                    raise ValueError(f"Invalid WHERE clause: {str(e)}")
+            
+            if result_df.empty:
+                logger.warning("Query returned no results")
             
             return result_df
             
