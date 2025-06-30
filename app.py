@@ -1172,18 +1172,14 @@ SELECT * FROM data WHERE amount > 1000 AND status = 'active'
                                 target_nulls = st.session_state.target_data[col].isnull().sum()
                                 
                                 try:
-                                    # Calculate match ratio safely
-                                    max_unique = max(source_unique, target_unique)
-                                    match_ratio = (min(source_unique, target_unique) / max_unique) if max_unique > 0 else 0
-                                    
                                     try:
-                                        # Calculate match ratio safely
-                                        max_unique = max(source_unique, target_unique)
-                                        match_ratio = (min(source_unique, target_unique) / max_unique) if max_unique > 0 else 0
-                                        
-                                        # Get sample values safely
+                                        # Get sample values and calculate statistics safely
                                         source_sample = st.session_state.source_data[col].dropna().unique()[:3]
                                         target_sample = st.session_state.target_data[col].dropna().unique()[:3]
+                                        
+                                        # Calculate match ratio
+                                        max_unique = max(source_unique, target_unique)
+                                        match_ratio = (min(source_unique, target_unique) / max_unique) if max_unique > 0 else 0
                                         
                                         # Format sample values safely
                                         source_samples_str = ', '.join(str(x)[:50] for x in source_sample)  # Truncate long values
