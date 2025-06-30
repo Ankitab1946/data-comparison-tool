@@ -744,17 +744,30 @@ def main():
                                         source_nulls = st.session_state.source_data[col].isnull().sum()
                                         target_nulls = st.session_state.target_data[col].isnull().sum()
                                         
+                                        # Calculate match ratio safely
+                                        max_unique = max(source_unique, target_unique)
+                                        match_ratio = (min(source_unique, target_unique) / max_unique) if max_unique > 0 else 0
+                                        
+                                        # Get sample values
+                                        source_sample = st.session_state.source_data[col].dropna().unique()[:3]
+                                        target_sample = st.session_state.target_data[col].dropna().unique()[:3]
+                                        
                                         st.markdown(f"""
                                             **{col}**
                                             - Unique values: Source ({source_unique}) | Target ({target_unique})
                                             - Null values: Source ({source_nulls}) | Target ({target_nulls})
-                                            - Match ratio: {min(source_unique, target_unique) / max(source_unique, target_unique):.2%}
+                                            - Match ratio: {match_ratio:.2%}
+                                            - Sample values:
+                                              - Source: {', '.join(str(x) for x in source_sample)}
+                                              - Target: {', '.join(str(x) for x in target_sample)}
                                         """)
                                         
                                         if source_unique != target_unique:
                                             st.warning(f"⚠️ Different number of unique values in {col}")
                                         if source_nulls > 0 or target_nulls > 0:
                                             st.warning(f"⚠️ Found null values in {col}")
+                                        if match_ratio < 0.9:  # Less than 90% match
+                                            st.warning(f"⚠️ Low match ratio ({match_ratio:.2%}) for {col}")
                                 
                                 # Log confirmation of mapping update
                                 st.success(f"✅ Mapping updated with {len(join_columns)} join column(s)")
@@ -1148,17 +1161,30 @@ SELECT * FROM data WHERE amount > 1000 AND status = 'active'
                                 source_nulls = st.session_state.source_data[col].isnull().sum()
                                 target_nulls = st.session_state.target_data[col].isnull().sum()
                                 
+                                # Calculate match ratio safely
+                                max_unique = max(source_unique, target_unique)
+                                match_ratio = (min(source_unique, target_unique) / max_unique) if max_unique > 0 else 0
+                                
+                                # Get sample values
+                                source_sample = st.session_state.source_data[col].dropna().unique()[:3]
+                                target_sample = st.session_state.target_data[col].dropna().unique()[:3]
+                                
                                 st.markdown(f"""
                                     **{col}**
                                     - Unique values: Source ({source_unique}) | Target ({target_unique})
                                     - Null values: Source ({source_nulls}) | Target ({target_nulls})
-                                    - Match ratio: {min(source_unique, target_unique) / max(source_unique, target_unique):.2%}
+                                    - Match ratio: {match_ratio:.2%}
+                                    - Sample values:
+                                      - Source: {', '.join(str(x) for x in source_sample)}
+                                      - Target: {', '.join(str(x) for x in target_sample)}
                                 """)
                                 
                                 if source_unique != target_unique:
                                     st.warning(f"⚠️ Different number of unique values in {col}")
                                 if source_nulls > 0 or target_nulls > 0:
                                     st.warning(f"⚠️ Found null values in {col}")
+                                if match_ratio < 0.9:  # Less than 90% match
+                                    st.warning(f"⚠️ Low match ratio ({match_ratio:.2%}) for {col}")
                         
                         # Log confirmation of mapping update
                         st.success(f"✅ Mapping updated with {len(join_columns)} join column(s)")
