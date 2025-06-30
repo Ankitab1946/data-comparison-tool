@@ -317,12 +317,26 @@ def load_data(source_type: str, file_upload, connection_params: Dict[str, Any] =
             file_buffer.seek(0)
             
             try:
-                df = pd.read_csv(
-                    file_buffer,
-                    delimiter=delimiter,
-                    encoding='utf-8',
-                    on_bad_lines='skip'
-                )
+                # Try different encodings
+                encodings = ['utf-8', 'latin1', 'iso-8859-1', 'cp1252']
+                for encoding in encodings:
+                    try:
+                        file_buffer.seek(0)  # Reset buffer position
+                        df = pd.read_csv(
+                            file_buffer,
+                            delimiter=delimiter,
+                            encoding=encoding,
+                            on_bad_lines='skip'
+                        )
+                        st.write(f"Debug: Successfully read file with {encoding} encoding")
+                        break
+                    except UnicodeDecodeError:
+                        continue
+                    except Exception as e:
+                        st.write(f"Debug: Error with {encoding} encoding: {str(e)}")
+                        continue
+                else:
+                    raise ValueError("Could not read file with any supported encoding")
                 
                 if df.empty:
                     raise ValueError("No data found in the file")
