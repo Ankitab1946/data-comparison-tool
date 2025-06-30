@@ -1731,11 +1731,21 @@ class ComparisonEngine:
             source_type = str(self.source_df[s_col].dtype)
             target_type = str(self.target_df[t_col].dtype) if t_col else 'unknown'
             
+            # Store original types before conversion
+            original_source_type = source_type
+            original_target_type = target_type
+            
             # Convert 'object' type to 'string'
             if source_type == 'object':
                 source_type = 'string'
             if target_type == 'object':
                 target_type = 'string'
+                
+            # Special handling for float64 type
+            if 'float64' in source_type.lower() or 'float64' in target_type.lower():
+                source_type = 'float'
+                target_type = 'float' if t_col else 'unknown'
+                mapped_type = 'float'
             
             # Check if either type is from SQL Server
             is_sql_source = any(sql_type in source_type.lower() for sql_type in self.SQL_TYPE_MAPPING.keys())
