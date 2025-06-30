@@ -670,15 +670,7 @@ def main():
             with st.spinner("Loading source data..."):
                 try:
                     if source_type in ['CSV file', 'DAT file', 'Parquet file', 'Flat files inside zipped folder']:
-                        from utils.data_loader import DataLoader
-                        import tempfile
-                        with tempfile.NamedTemporaryFile(delete=False) as tmp_file:
-                            tmp_file.write(st.session_state.source_file.getbuffer())
-                            tmp_file_path = tmp_file.name
-                        source_data = DataLoader.read_chunked_file(
-                            tmp_file_path,
-                            delimiter=source_delimiter
-                        )
+                        source_data = load_data(source_type, st.session_state.source_file, None, source_delimiter)
                     else:
                         source_data = load_data(source_type, None, source_params)
                     
@@ -693,15 +685,7 @@ def main():
             with st.spinner("Loading target data..."):
                 try:
                     if target_type in ['CSV file', 'DAT file', 'Parquet file', 'Flat files inside zipped folder']:
-                    from utils.data_loader import DataLoader
-                    import tempfile
-                    with tempfile.NamedTemporaryFile(delete=False) as tmp_file:
-                        tmp_file.write(st.session_state.target_file.getbuffer())
-                        tmp_file_path = tmp_file.name
-                    target_data = DataLoader.read_chunked_file(
-                        tmp_file_path,
-                        delimiter=target_delimiter
-                    )
+                        target_data = load_data(target_type, st.session_state.target_file, None, target_delimiter)
                     else:
                         target_data = load_data(target_type, None, target_params)
                     
@@ -862,7 +846,7 @@ SELECT * FROM data WHERE amount > 1000 AND status = 'active'
                             st.info("Execute comparison to see filtered data")
                     else:
                         st.write("Original source data")
-                        st.dataframe(source_df.head(10))
+                        st.dataframe(st.session_state.source_data.head(10))
                 
                 with preview_col2:
                     st.markdown("#### Target Data")
@@ -878,7 +862,7 @@ SELECT * FROM data WHERE amount > 1000 AND status = 'active'
                             st.info("Execute comparison to see filtered data")
                     else:
                         st.write("Original target data")
-                        st.dataframe(target_df.head(10))
+                        st.dataframe(st.session_state.target_data.head(10))
             
             # Compare button
             if st.button("Compare"):
