@@ -1183,8 +1183,8 @@ SELECT * FROM data WHERE amount > 1000 AND status = 'active'
                                     - Null values: Source ({source_nulls}) | Target ({target_nulls})
                                     - Match ratio: {match_ratio:.2%}
                                     - Sample values:
-                                      - Source: {', '.join(str(x) for x in source_sample)}
-                                      - Target: {', '.join(str(x) for x in target_sample)}
+                                      - Source: {source_samples_str}
+                                      - Target: {target_samples_str}
                                 """)
                                 
                                 if source_unique != target_unique:
