@@ -22,21 +22,34 @@ def update_column_mapping(edited_mapping, engine):
             
             # Set mapping in engine first (assuming engine has set_mapping method)
             join_columns = [m['source'] for m in mapping_records if m.get('join', False)]
-            engine.set_mapping(mapping_records, join_columns)
             
-            # Update types in the engine for each column
+            # Ensure all required fields are present and properly typed
             for mapping in mapping_records:
+                # Handle object/float type conversions
                 if mapping['source_type'] == 'object':
                     mapping['source_type'] = 'string'
                 if mapping['target_type'] == 'object':
                     mapping['target_type'] = 'string'
-                    
+                
+                # Ensure float types are consistent
+                if any('float' in str(t).lower() for t in [mapping['source_type'], mapping['target_type']]):
+                    mapping['data_type'] = 'float64'
+                    mapping['source_type'] = 'float64'
+                    mapping['target_type'] = 'float64'
+                
+                # Ensure all required fields exist
+                if 'data_type' not in mapping or not mapping['data_type']:
+                    mapping['data_type'] = mapping['source_type']
+                
                 # Update engine's type mapping
                 engine.update_column_types(
                     mapping['source'],
                     source_type=mapping['source_type'],
                     target_type=mapping['target_type']
                 )
+            
+            # Set mapping in engine
+            engine.set_mapping(mapping_records, join_columns)
             
             # Store updated mapping in session state
             st.session_state.column_mapping = mapping_records
@@ -55,14 +68,30 @@ def update_column_mapping(edited_mapping, engine):
 def create_mapping_editor(mapping_data, target_columns, key_suffix=""):
     """Create a data editor for column mapping with error handling."""
     try:
-        # Automatically detect data types for source and target columns if not set
+        # Automatically detect and normalize data types
         for row in mapping_data.itertuples():
+            # Handle source type
             if pd.isna(row.source_type) or row.source_type == '':
                 mapping_data.at[row.Index, 'source_type'] = TYPE_MAPPING.get(str(row.source_type).lower(), 'string')
+            elif 'float' in str(row.source_type).lower():
+                mapping_data.at[row.Index, 'source_type'] = 'float64'
+            
+            # Handle target type
             if pd.isna(row.target_type) or row.target_type == '':
                 mapping_data.at[row.Index, 'target_type'] = TYPE_MAPPING.get(str(row.target_type).lower(), 'string')
+            elif 'float' in str(row.target_type).lower():
+                mapping_data.at[row.Index, 'target_type'] = 'float64'
+            
+            # Handle comparison type (data_type)
             if pd.isna(row.data_type) or row.data_type == '':
-                mapping_data.at[row.Index, 'data_type'] = TYPE_MAPPING.get(str(row.data_type).lower(), 'string')
+                # If either source or target is float, use float64
+                if ('float' in str(row.source_type).lower() or 
+                    'float' in str(row.target_type).lower() or 
+                    'decimal' in str(row.source_type).lower() or 
+                    'decimal' in str(row.target_type).lower()):
+                    mapping_data.at[row.Index, 'data_type'] = 'float64'
+                else:
+                    mapping_data.at[row.Index, 'data_type'] = TYPE_MAPPING.get(str(row.source_type).lower(), 'string')
 
         edited_mapping = st.data_editor(
             mapping_data,
@@ -236,8 +265,10 @@ TYPE_MAPPING = {
     'char': 'string',
     'date': 'datetime64[ns]',
     'datetime': 'datetime64[ns]',
-    'decimal': 'float',
-    'float': 'float',
+    'decimal': 'float64',
+    'float': 'float64',
+    'float64': 'float64',
+    'double': 'float64',
     'bit': 'bool',
     'nchar': 'char',
     'boolean': 'bool'
@@ -892,10 +923,37 @@ SELECT * FROM data WHERE amount > 1000 AND status = 'active'
                                 target_query=target_query
                             )
                             
-                            # Ensure required keys exist in results
-                            if not all(key in comparison_results for key in ['rows_match', 'columns_match']):
-                                st.error("Invalid comparison results. Missing required information.")
-                                return
+                            # Initialize default comparison results
+                            default_results = {
+                                'rows_match': False,
+                                'columns_match': False,
+                                'match_status': False,
+                                'datacompy_report': '',
+                                'source_unmatched_rows': pd.DataFrame(),
+                                'target_unmatched_rows': pd.DataFrame(),
+                                'column_summary': {},
+                                'distinct_values': {},
+                                'row_counts': {
+                                    'source_name': 'Source',
+                                    'target_name': 'Target',
+                                    'source_count': 0,
+                                    'target_count': 0
+                                }
+                            }
+                            
+                            # Update default results with actual results
+                            if comparison_results is not None:
+                                for key in default_results:
+                                    if key in comparison_results:
+                                        default_results[key] = comparison_results[key]
+                            
+                            # Ensure boolean values are properly set
+                            default_results['rows_match'] = bool(default_results['rows_match'])
+                            default_results['columns_match'] = bool(default_results['columns_match'])
+                            default_results['match_status'] = bool(default_results['match_status'])
+                            
+                            # Use the properly initialized results
+                            comparison_results = default_results
                                 
                         except Exception as e:
                             st.error(f"Comparison failed: {str(e)}")
