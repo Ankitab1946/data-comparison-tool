@@ -670,16 +670,15 @@ def main():
             with st.spinner("Loading source data..."):
                 try:
                     if source_type in ['CSV file', 'DAT file', 'Parquet file', 'Flat files inside zipped folder']:
-                        # Use DataLoader.read_chunked_file for better encoding handling
-                    from utils.data_loader import DataLoader
-                    import tempfile
-                    with tempfile.NamedTemporaryFile(delete=False) as tmp_file:
-                        tmp_file.write(st.session_state.source_file.getbuffer())
-                        tmp_file_path = tmp_file.name
-                    source_data = DataLoader.read_chunked_file(
-                        tmp_file_path,
-                        delimiter=source_delimiter
-                    )
+                        from utils.data_loader import DataLoader
+                        import tempfile
+                        with tempfile.NamedTemporaryFile(delete=False) as tmp_file:
+                            tmp_file.write(st.session_state.source_file.getbuffer())
+                            tmp_file_path = tmp_file.name
+                        source_data = DataLoader.read_chunked_file(
+                            tmp_file_path,
+                            delimiter=source_delimiter
+                        )
                     else:
                         source_data = load_data(source_type, None, source_params)
                     
