@@ -671,11 +671,15 @@ def main():
                 try:
                     if source_type in ['CSV file', 'DAT file', 'Parquet file', 'Flat files inside zipped folder']:
                         # Use DataLoader.read_chunked_file for better encoding handling
-                        from utils.data_loader import DataLoader
-                        source_data = DataLoader.read_chunked_file(
-                            st.session_state.source_file,
-                            delimiter=source_delimiter
-                        )
+                    from utils.data_loader import DataLoader
+                    import tempfile
+                    with tempfile.NamedTemporaryFile(delete=False) as tmp_file:
+                        tmp_file.write(st.session_state.source_file.getbuffer())
+                        tmp_file_path = tmp_file.name
+                    source_data = DataLoader.read_chunked_file(
+                        tmp_file_path,
+                        delimiter=source_delimiter
+                    )
                     else:
                         source_data = load_data(source_type, None, source_params)
                     
@@ -690,11 +694,15 @@ def main():
             with st.spinner("Loading target data..."):
                 try:
                     if target_type in ['CSV file', 'DAT file', 'Parquet file', 'Flat files inside zipped folder']:
-                        from utils.data_loader import DataLoader
-                        target_data = DataLoader.read_chunked_file(
-                            st.session_state.target_file,
-                            delimiter=target_delimiter
-                        )
+                    from utils.data_loader import DataLoader
+                    import tempfile
+                    with tempfile.NamedTemporaryFile(delete=False) as tmp_file:
+                        tmp_file.write(st.session_state.target_file.getbuffer())
+                        tmp_file_path = tmp_file.name
+                    target_data = DataLoader.read_chunked_file(
+                        tmp_file_path,
+                        delimiter=target_delimiter
+                    )
                     else:
                         target_data = load_data(target_type, None, target_params)
                     
