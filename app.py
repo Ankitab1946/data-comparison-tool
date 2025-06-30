@@ -614,8 +614,11 @@ def main():
                 source_file = st.file_uploader(f"Upload {source_type}", key="source_file")
                 if source_type in ['CSV file', 'DAT file', 'Flat files inside zipped folder']:
                     source_delimiter = st.text_input("Source Delimiter", ",", key="source_delimiter")
+                else:
+                    source_delimiter = ","
             else:
                 source_params = get_connection_inputs(source_type, "source")
+                source_delimiter = ","
                 
         with col2:
             st.markdown("### Target")
@@ -627,8 +630,11 @@ def main():
                 target_file = st.file_uploader(f"Upload {target_type}", key="target_file")
                 if target_type in ['CSV file', 'DAT file', 'Flat files inside zipped folder']:
                     target_delimiter = st.text_input("Target Delimiter", ",", key="target_delimiter")
+                else:
+                    target_delimiter = ","
             else:
                 target_params = get_connection_inputs(target_type, "target")
+                target_delimiter = ","
 
     # Load Data button
     if st.button("Load Data"):
@@ -665,7 +671,7 @@ def main():
                 try:
                     if source_type in ['CSV file', 'DAT file', 'Parquet file', 'Flat files inside zipped folder']:
                         source_data = load_data(source_type, st.session_state.source_file,
-                                             delimiter=st.session_state.get('source_delimiter', ','))
+                                             delimiter=source_delimiter)
                     else:
                         source_data = load_data(source_type, None, source_params)
                     
