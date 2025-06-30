@@ -735,6 +735,27 @@ def main():
                                 st.session_state.column_mapping = mapping_records
                                 st.session_state['active_join_columns'] = join_columns
                                 
+                                # Show detailed join column analysis
+                                with st.expander("🔍 Join Column Analysis"):
+                                    st.markdown("### Selected Join Columns")
+                                    for col in join_columns:
+                                        source_unique = st.session_state.source_data[col].nunique()
+                                        target_unique = st.session_state.target_data[col].nunique()
+                                        source_nulls = st.session_state.source_data[col].isnull().sum()
+                                        target_nulls = st.session_state.target_data[col].isnull().sum()
+                                        
+                                        st.markdown(f"""
+                                            **{col}**
+                                            - Unique values: Source ({source_unique}) | Target ({target_unique})
+                                            - Null values: Source ({source_nulls}) | Target ({target_nulls})
+                                            - Match ratio: {min(source_unique, target_unique) / max(source_unique, target_unique):.2%}
+                                        """)
+                                        
+                                        if source_unique != target_unique:
+                                            st.warning(f"⚠️ Different number of unique values in {col}")
+                                        if source_nulls > 0 or target_nulls > 0:
+                                            st.warning(f"⚠️ Found null values in {col}")
+                                
                                 # Log confirmation of mapping update
                                 st.success(f"✅ Mapping updated with {len(join_columns)} join column(s)")
                                 
@@ -1089,8 +1110,26 @@ SELECT * FROM data WHERE amount > 1000 AND status = 'active'
             if st.button("Compare Data", key="main_compare"):
                 try:
                     with st.spinner("Comparing data..."):
+                        # Validate join columns
+                        if not join_columns:
+                            st.error("⚠️ No join columns selected. Please select at least one join column.")
+                            return
+                        
                         # Log current join column status
                         st.info(f"Starting comparison with join columns: {', '.join(join_columns)}")
+                        
+                        # Verify join columns exist in both datasets
+                        missing_in_source = [col for col in join_columns if col not in mapping_df['source'].values]
+                        missing_in_target = [col for col in join_columns if col not in st.session_state.target_data.columns]
+                        
+                        if missing_in_source or missing_in_target:
+                            error_msg = []
+                            if missing_in_source:
+                                error_msg.append(f"Columns missing in source: {', '.join(missing_in_source)}")
+                            if missing_in_target:
+                                error_msg.append(f"Columns missing in target: {', '.join(missing_in_target)}")
+                            st.error("⚠️ " + " | ".join(error_msg))
+                            return
                         
                         # Convert mapping to records and set in engine
                         mapping_records = mapping_df.to_dict('records')
@@ -1099,6 +1138,27 @@ SELECT * FROM data WHERE amount > 1000 AND status = 'active'
                         # Store updated mapping and join columns in session state
                         st.session_state.column_mapping = mapping_records
                         st.session_state['active_join_columns'] = join_columns
+                        
+                        # Show detailed join column analysis
+                        with st.expander("🔍 Join Column Analysis"):
+                            st.markdown("### Selected Join Columns")
+                            for col in join_columns:
+                                source_unique = st.session_state.source_data[col].nunique()
+                                target_unique = st.session_state.target_data[col].nunique()
+                                source_nulls = st.session_state.source_data[col].isnull().sum()
+                                target_nulls = st.session_state.target_data[col].isnull().sum()
+                                
+                                st.markdown(f"""
+                                    **{col}**
+                                    - Unique values: Source ({source_unique}) | Target ({target_unique})
+                                    - Null values: Source ({source_nulls}) | Target ({target_nulls})
+                                    - Match ratio: {min(source_unique, target_unique) / max(source_unique, target_unique):.2%}
+                                """)
+                                
+                                if source_unique != target_unique:
+                                    st.warning(f"⚠️ Different number of unique values in {col}")
+                                if source_nulls > 0 or target_nulls > 0:
+                                    st.warning(f"⚠️ Found null values in {col}")
                         
                         # Log confirmation of mapping update
                         st.success(f"✅ Mapping updated with {len(join_columns)} join column(s)")
