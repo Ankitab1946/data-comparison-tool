@@ -17,42 +17,44 @@ def update_column_mapping(edited_mapping, engine):
     """Helper function to safely update column mapping in session state."""
     if edited_mapping is not None:
         try:
-            # Convert edited mapping to records and preserve join columns
-            mapping_records = edited_mapping.to_dict('records')
+            # Convert to DataFrame if not already
+            mapping_df = edited_mapping if isinstance(edited_mapping, pd.DataFrame) else pd.DataFrame(edited_mapping)
             
-            # Extract join columns before any type conversion
-            join_columns = [m['source'] for m in mapping_records if m.get('join', False)]
+            # Ensure join column is boolean
+            mapping_df['join'] = mapping_df['join'].fillna(False).astype(bool)
             
-            # Process type conversions while preserving join status
-            for mapping in mapping_records:
-                # Store original join status
-                is_join = mapping.get('join', False)
+            # Extract join columns
+            join_columns = list(mapping_df[mapping_df['join']]['source'])
+            
+            # Convert to records for processing
+            mapping_records = []
+            for _, row in mapping_df.iterrows():
+                record = row.to_dict()
                 
-                # Handle object/float type conversions
-                if mapping['source_type'] == 'object':
-                    mapping['source_type'] = 'string'
-                if mapping['target_type'] == 'object':
-                    mapping['target_type'] = 'string'
+                # Handle type conversions
+                if record['source_type'] == 'object':
+                    record['source_type'] = 'string'
+                if record['target_type'] == 'object':
+                    record['target_type'] = 'string'
                 
                 # Ensure float types are consistent
-                if any('float' in str(t).lower() for t in [mapping['source_type'], mapping['target_type']]):
-                    mapping['data_type'] = 'float64'
-                    mapping['source_type'] = 'float64'
-                    mapping['target_type'] = 'float64'
+                if any('float' in str(t).lower() for t in [record['source_type'], record['target_type']]):
+                    record['data_type'] = 'float64'
+                    record['source_type'] = 'float64'
+                    record['target_type'] = 'float64'
                 
                 # Ensure all required fields exist
-                if 'data_type' not in mapping or not mapping['data_type']:
-                    mapping['data_type'] = mapping['source_type']
-                
-                # Restore join status
-                mapping['join'] = is_join
+                if 'data_type' not in record or not record['data_type']:
+                    record['data_type'] = record['source_type']
                 
                 # Update engine's type mapping
                 engine.update_column_types(
-                    mapping['source'],
-                    source_type=mapping['source_type'],
-                    target_type=mapping['target_type']
+                    record['source'],
+                    source_type=record['source_type'],
+                    target_type=record['target_type']
                 )
+                
+                mapping_records.append(record)
             
             # Set mapping in engine with preserved join columns
             engine.set_mapping(mapping_records, join_columns)
@@ -60,7 +62,8 @@ def update_column_mapping(edited_mapping, engine):
             # Store updated mapping in session state
             st.session_state.column_mapping = mapping_records
             
-            # Log the number of join columns for debugging
+            # Log join columns for debugging
+            st.session_state['debug_join_columns'] = join_columns
             logger.info(f"Number of join columns after update: {len(join_columns)}")
             return True
             
@@ -77,10 +80,14 @@ def update_column_mapping(edited_mapping, engine):
 def create_mapping_editor(mapping_data, target_columns, key_suffix=""):
     """Create a data editor for column mapping with error handling."""
     try:
+        # Convert join column to boolean and preserve status
+        if 'join' in mapping_data.columns:
+            mapping_data['join'] = mapping_data['join'].fillna(False).astype(bool)
+        else:
+            mapping_data['join'] = False
+            
         # Store original join status
-        join_status = {}
-        for idx, row in mapping_data.iterrows():
-            join_status[idx] = bool(row.get('join', False))
+        join_status = mapping_data['join'].copy()
         
         # Automatically detect and normalize data types
         for row in mapping_data.itertuples():
@@ -106,9 +113,9 @@ def create_mapping_editor(mapping_data, target_columns, key_suffix=""):
                     mapping_data.at[row.Index, 'data_type'] = 'float64'
                 else:
                     mapping_data.at[row.Index, 'data_type'] = TYPE_MAPPING.get(str(row.source_type).lower(), 'string')
-            
-            # Restore join status
-            mapping_data.at[row.Index, 'join'] = join_status.get(row.Index, False)
+        
+        # Restore join status
+        mapping_data['join'] = join_status
 
         # Create data editor with enhanced configuration
         edited_mapping = st.data_editor(
@@ -670,8 +677,17 @@ def main():
                         excluded_cols = sum(1 for m in st.session_state.column_mapping if m['exclude'])
                         st.metric("Excluded Columns", excluded_cols)
                     
-                    # Get selected join columns and validate
-                    join_columns = [m['source'] for m in st.session_state.column_mapping if m.get('join', False)]
+                    # Convert mapping to DataFrame for validation
+                    mapping_df = pd.DataFrame(st.session_state.column_mapping)
+                    
+                    # Ensure join column is boolean
+                    mapping_df['join'] = mapping_df['join'].fillna(False).astype(bool)
+                    
+                    # Get selected join columns
+                    join_columns = list(mapping_df[mapping_df['join']]['source'])
+                    
+                    # Store join columns in session state for debugging
+                    st.session_state['current_join_columns'] = join_columns
                     
                     # Show join column status
                     if not join_columns:
@@ -685,14 +701,44 @@ def main():
                         """, unsafe_allow_html=True)
                     else:
                         st.success(f"✅ Selected join columns: {', '.join(join_columns)}")
+                        # Debug information
+                        st.info(f"Debug: Found {len(join_columns)} join column(s): {join_columns}")
                         # Compare button
                         if st.button("Compare Data", key="sample_compare"):
                             try:
+                                # Validate join columns
+                                if not join_columns:
+                                    st.error("⚠️ No join columns selected. Please select at least one join column.")
+                                    return
                                 
-                                # Set mapping in comparison engine
-                                engine.set_mapping(st.session_state.column_mapping, join_columns)
+                                # Log current join column status
+                                st.info(f"Starting comparison with join columns: {', '.join(join_columns)}")
                                 
-                                # Perform comparison
+                                # Verify join columns exist in both datasets
+                                missing_in_source = [col for col in join_columns if col not in mapping_df['source'].values]
+                                missing_in_target = [col for col in join_columns if col not in st.session_state.target_data.columns]
+                                
+                                if missing_in_source or missing_in_target:
+                                    error_msg = []
+                                    if missing_in_source:
+                                        error_msg.append(f"Columns missing in source: {', '.join(missing_in_source)}")
+                                    if missing_in_target:
+                                        error_msg.append(f"Columns missing in target: {', '.join(missing_in_target)}")
+                                    st.error("⚠️ " + " | ".join(error_msg))
+                                    return
+                                
+                                # Convert mapping to records and set in engine
+                                mapping_records = mapping_df.to_dict('records')
+                                engine.set_mapping(mapping_records, join_columns)
+                                
+                                # Store updated mapping and join columns in session state
+                                st.session_state.column_mapping = mapping_records
+                                st.session_state['active_join_columns'] = join_columns
+                                
+                                # Log confirmation of mapping update
+                                st.success(f"✅ Mapping updated with {len(join_columns)} join column(s)")
+                                
+                                # Perform comparison with updated mapping
                                 comparison_results = engine.compare()
                                 st.session_state.comparison_results = comparison_results
                                 
@@ -930,8 +976,17 @@ def main():
         with col3:
             st.metric("Excluded Columns", excluded_cols)
         
-        # Get selected join columns and validate
-        join_columns = [m['source'] for m in st.session_state.column_mapping if m.get('join', False)]
+        # Convert mapping to DataFrame for validation
+        mapping_df = pd.DataFrame(st.session_state.column_mapping)
+        
+        # Ensure join column is boolean
+        mapping_df['join'] = mapping_df['join'].fillna(False).astype(bool)
+        
+        # Get selected join columns
+        join_columns = list(mapping_df[mapping_df['join']]['source'])
+        
+        # Store join columns in session state for debugging
+        st.session_state['current_join_columns'] = join_columns
         
         # Show join column status with clear visibility
         if not join_columns:
@@ -946,6 +1001,8 @@ def main():
             """, unsafe_allow_html=True)
         else:
             st.success(f"✅ Selected join columns: {', '.join(join_columns)}")
+            # Debug information
+            st.info(f"Debug: Found {len(join_columns)} join column(s): {join_columns}")
             # Query Section (before Compare button)
             st.markdown("### Data Filtering (Optional)")
             enable_query = st.checkbox("Enable Data Filtering", help="Filter source or target data before comparison")
@@ -1032,8 +1089,19 @@ SELECT * FROM data WHERE amount > 1000 AND status = 'active'
             if st.button("Compare Data", key="main_compare"):
                 try:
                     with st.spinner("Comparing data..."):
-                        # Set mapping in comparison engine
-                        engine.set_mapping(st.session_state.column_mapping, join_columns)
+                        # Log current join column status
+                        st.info(f"Starting comparison with join columns: {', '.join(join_columns)}")
+                        
+                        # Convert mapping to records and set in engine
+                        mapping_records = mapping_df.to_dict('records')
+                        engine.set_mapping(mapping_records, join_columns)
+                        
+                        # Store updated mapping and join columns in session state
+                        st.session_state.column_mapping = mapping_records
+                        st.session_state['active_join_columns'] = join_columns
+                        
+                        # Log confirmation of mapping update
+                        st.success(f"✅ Mapping updated with {len(join_columns)} join column(s)")
                         
                         try:
                             # Perform comparison with queries
