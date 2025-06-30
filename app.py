@@ -1161,13 +1161,21 @@ SELECT * FROM data WHERE amount > 1000 AND status = 'active'
                                 source_nulls = st.session_state.source_data[col].isnull().sum()
                                 target_nulls = st.session_state.target_data[col].isnull().sum()
                                 
-                                # Calculate match ratio safely
-                                max_unique = max(source_unique, target_unique)
-                                match_ratio = (min(source_unique, target_unique) / max_unique) if max_unique > 0 else 0
-                                
-                                # Get sample values
-                                source_sample = st.session_state.source_data[col].dropna().unique()[:3]
-                                target_sample = st.session_state.target_data[col].dropna().unique()[:3]
+                                try:
+                                    # Calculate match ratio safely
+                                    max_unique = max(source_unique, target_unique)
+                                    match_ratio = (min(source_unique, target_unique) / max_unique) if max_unique > 0 else 0
+                                    
+                                    # Get sample values safely
+                                    source_sample = st.session_state.source_data[col].dropna().unique()[:3]
+                                    target_sample = st.session_state.target_data[col].dropna().unique()[:3]
+                                    
+                                    # Format sample values safely
+                                    source_samples_str = ', '.join(str(x)[:50] for x in source_sample)  # Truncate long values
+                                    target_samples_str = ', '.join(str(x)[:50] for x in target_sample)  # Truncate long values
+                                except Exception as e:
+                                    st.error(f"⚠️ Error analyzing join column {col}: {str(e)}")
+                                    continue
                                 
                                 st.markdown(f"""
                                     **{col}**
