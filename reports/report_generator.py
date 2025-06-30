@@ -133,7 +133,7 @@ class ReportGenerator:
         """Generate enhanced regression report with multiple checks."""
         try:
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            report_path = self.output_dir / f"regression_report_{timestamp}.xlsx"
+            report_path = self.output_dir / f"DifferenceReport_{timestamp}.xlsx"
             
             with pd.ExcelWriter(str(report_path), engine='xlsxwriter') as writer:
                 workbook = writer.book
@@ -568,10 +568,10 @@ class ReportGenerator:
                         logger.error(f"Error during merge operation: {str(merge_error)}")
                         raise ValueError(f"Failed to merge data: {str(merge_error)}")
                     
-                    # Create comparison status column
+                    # Create comparison status column with required classifications
                     chunk_merged['Status'] = chunk_merged['_merge'].map({
-                        'left_only': 'Deleted',
-                        'right_only': 'Inserted',
+                        'left_only': 'Left Only',
+                        'right_only': 'Right Only',
                         'both': 'Updated'
                     })
                     
@@ -617,7 +617,7 @@ class ReportGenerator:
                         # Write summary information
                         summary_sheet.merge_range('A1:B1', 'Comparison Results', header_format)
                         summary_sheet.write(2, 0, 'Status:', cell_format)
-                        summary_sheet.write(2, 1, 'No differences found', cell_format)
+                        summary_sheet.write(2, 1, 'There is No Differences found.', cell_format)
                         
                         summary_sheet.write(4, 0, 'Source Records:', cell_format)
                         summary_sheet.write(4, 1, len(source_df), cell_format)
@@ -673,15 +673,15 @@ class ReportGenerator:
                         target_val = diff_row.get(f"{col}_target") if f"{col}_target" in diff_row else None
                         
                         # Determine change type
-                        if status == 'Deleted':
-                            change_type = 'Deleted'
-                        elif status == 'Inserted':
-                            change_type = 'Inserted'
+                        if status == 'Left Only':
+                            change_type = 'Left Only'
+                        elif status == 'Right Only':
+                            change_type = 'Right Only'
                         else:
                             if pd.isna(source_val) and pd.isna(target_val):
                                 continue  # Skip if both values are null
                             elif source_val != target_val:
-                                change_type = 'Modified'
+                                change_type = 'Updated'
                             else:
                                 continue  # Skip if values are identical
                         
@@ -702,9 +702,7 @@ class ReportGenerator:
                 
                 # Define status colors for difference sheets
                 status_colors = {
-                    'Deleted': 'FFB6C1',     # Light pink
                     'Left Only': 'FFB6C1',   # Light pink
-                    'Inserted': '90EE90',    # Light green
                     'Right Only': '90EE90',  # Light green
                     'Updated': 'FFD700',     # Gold
                     'Modified': 'FFFF00'     # Yellow
@@ -735,6 +733,41 @@ class ReportGenerator:
                             'Status': status,
                             'Modified': is_modified
                         })
+                
+                # If there are no differences
+                if not comparison_data:
+                    # Create Excel file with summary only
+                    with pd.ExcelWriter(str(report_path), engine='xlsxwriter') as writer:
+                        # Create summary sheet
+                        summary_sheet = writer.book.add_worksheet('Summary')
+                        
+                        # Create formats
+                        header_format = writer.book.add_format({
+                            'bold': True,
+                            'font_size': 12,
+                            'bg_color': '#D3D3D3',
+                            'border': 1,
+                            'align': 'center',
+                            'valign': 'vcenter'
+                        })
+                        
+                        cell_format = writer.book.add_format({
+                            'font_size': 11,
+                            'border': 1,
+                            'align': 'left',
+                            'valign': 'vcenter'
+                        })
+                        
+                        # Write summary information
+                        summary_sheet.merge_range('A1:B1', 'Comparison Results', header_format)
+                        summary_sheet.write(2, 0, 'Status:', cell_format)
+                        summary_sheet.write(2, 1, 'There is No Differences found.', cell_format)
+                        
+                        # Set column widths
+                        summary_sheet.set_column(0, 0, 20)
+                        summary_sheet.set_column(1, 1, 40)
+                    
+                    return str(report_path)
                 
                 # Create side-by-side comparison DataFrame
                 comparison_df = pd.DataFrame(comparison_data)
@@ -843,8 +876,8 @@ class ReportGenerator:
                         ('Total Rows', total_rows),
                         ('Number of Sheets', num_chunks),
                         ('Rows per Sheet', CHUNK_SIZE),
-                        ('Deleted Records', sum(merged['Status'] == 'Deleted')),
-                        ('Inserted Records', sum(merged['Status'] == 'Inserted')),
+                        ('Left Only Records', sum(merged['Status'] == 'Left Only')),
+                        ('Right Only Records', sum(merged['Status'] == 'Right Only')),
                         ('Updated Records', sum(merged['Status'] == 'Updated'))
                     ]
                     
