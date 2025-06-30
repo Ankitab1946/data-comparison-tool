@@ -1171,41 +1171,46 @@ SELECT * FROM data WHERE amount > 1000 AND status = 'active'
                                 source_nulls = st.session_state.source_data[col].isnull().sum()
                                 target_nulls = st.session_state.target_data[col].isnull().sum()
                                 
-                                try:
-                                    # Get sample values and calculate statistics safely
-                                    source_sample = st.session_state.source_data[col].dropna().unique()[:3]
-                                    target_sample = st.session_state.target_data[col].dropna().unique()[:3]
-                                    
-                                    # Calculate match ratio
-                                    max_unique = max(source_unique, target_unique)
-                                    match_ratio = (min(source_unique, target_unique) / max_unique) if max_unique > 0 else 0
-                                        
-                                        # Format sample values safely
-                                        source_samples_str = ', '.join(str(x)[:50] for x in source_sample)  # Truncate long values
-                                        target_samples_str = ', '.join(str(x)[:50] for x in target_sample)  # Truncate long values
-                                        
-                                        # Display analysis results
-                                        st.markdown(f"""
-                                            **{col}**
-                                            - Unique values: Source ({source_unique}) | Target ({target_unique})
-                                            - Null values: Source ({source_nulls}) | Target ({target_nulls})
-                                            - Match ratio: {match_ratio:.2%}
-                                            - Sample values:
-                                              - Source: {source_samples_str}
-                                              - Target: {target_samples_str}
-                                        """)
-                                        
-                                        # Show warnings for potential issues
-                                        if source_unique != target_unique:
-                                            st.warning(f"⚠️ Different number of unique values in {col}")
-                                        if source_nulls > 0 or target_nulls > 0:
-                                            st.warning(f"⚠️ Found null values in {col}")
-                                        if match_ratio < 0.9:  # Less than 90% match
-                                            st.warning(f"⚠️ Low match ratio ({match_ratio:.2%}) for {col}")
+                                # Create container for join column analysis
+                                with st.container():
+                                    with st.spinner(f"Analyzing join column: {col}"):
+                                        try:
+                                            # Get sample values and calculate statistics safely
+                                            source_sample = st.session_state.source_data[col].dropna().unique()[:3]
+                                            target_sample = st.session_state.target_data[col].dropna().unique()[:3]
                                             
-                                    except Exception as e:
-                                        st.error(f"⚠️ Error analyzing join column {col}: {str(e)}")
-                                        continue
+                                            # Calculate match ratio
+                                            max_unique = max(source_unique, target_unique)
+                                            match_ratio = (min(source_unique, target_unique) / max_unique) if max_unique > 0 else 0
+                                            
+                                            # Format sample values safely
+                                            source_samples_str = ', '.join(str(x)[:50] for x in source_sample)  # Truncate long values
+                                            target_samples_str = ', '.join(str(x)[:50] for x in target_sample)  # Truncate long values
+                                            
+                                            # Display results in Streamlit context
+                                            st.markdown(f"""
+                                                **{col}**
+                                                - Unique values: Source ({source_unique}) | Target ({target_unique})
+                                                - Null values: Source ({source_nulls}) | Target ({target_nulls})
+                                                - Match ratio: {match_ratio:.2%}
+                                                - Sample values:
+                                                  - Source: {source_samples_str}
+                                                  - Target: {target_samples_str}
+                                            """)
+                                            
+                                            # Show warnings in a single container
+                                            warning_container = st.container()
+                                            with warning_container:
+                                                if source_unique != target_unique:
+                                                    st.warning(f"⚠️ Different number of unique values in {col}")
+                                                if source_nulls > 0 or target_nulls > 0:
+                                                    st.warning(f"⚠️ Found null values in {col}")
+                                                if match_ratio < 0.9:  # Less than 90% match
+                                                    st.warning(f"⚠️ Low match ratio ({match_ratio:.2%}) for {col}")
+                                            
+                                        except Exception as e:
+                                            st.error(f"⚠️ Error analyzing join column {col}: {str(e)}")
+                                            continue
                         
                         # Log confirmation of mapping update
                         st.success(f"✅ Mapping updated with {len(join_columns)} join column(s)")
