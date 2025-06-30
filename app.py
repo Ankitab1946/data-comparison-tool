@@ -17,54 +17,42 @@ def update_column_mapping(edited_mapping, engine):
     """Helper function to safely update column mapping in session state."""
     if edited_mapping is not None:
         try:
-            # Convert to DataFrame if not already
-            mapping_df = edited_mapping if isinstance(edited_mapping, pd.DataFrame) else pd.DataFrame(edited_mapping)
+            # Convert edited mapping to records
+            mapping_records = edited_mapping.to_dict('records')
             
-            # Ensure join column is boolean
-            mapping_df['join'] = mapping_df['join'].fillna(False).astype(bool)
+            # Set mapping in engine first (assuming engine has set_mapping method)
+            join_columns = [m['source'] for m in mapping_records if m.get('join', False)]
             
-            # Extract join columns
-            join_columns = list(mapping_df[mapping_df['join']]['source'])
-            
-            # Convert to records for processing
-            mapping_records = []
-            for _, row in mapping_df.iterrows():
-                record = row.to_dict()
-                
-                # Handle type conversions
-                if record['source_type'] == 'object':
-                    record['source_type'] = 'string'
-                if record['target_type'] == 'object':
-                    record['target_type'] = 'string'
+            # Ensure all required fields are present and properly typed
+            for mapping in mapping_records:
+                # Handle object/float type conversions
+                if mapping['source_type'] == 'object':
+                    mapping['source_type'] = 'string'
+                if mapping['target_type'] == 'object':
+                    mapping['target_type'] = 'string'
                 
                 # Ensure float types are consistent
-                if any('float' in str(t).lower() for t in [record['source_type'], record['target_type']]):
-                    record['data_type'] = 'float64'
-                    record['source_type'] = 'float64'
-                    record['target_type'] = 'float64'
+                if any('float' in str(t).lower() for t in [mapping['source_type'], mapping['target_type']]):
+                    mapping['data_type'] = 'float64'
+                    mapping['source_type'] = 'float64'
+                    mapping['target_type'] = 'float64'
                 
                 # Ensure all required fields exist
-                if 'data_type' not in record or not record['data_type']:
-                    record['data_type'] = record['source_type']
+                if 'data_type' not in mapping or not mapping['data_type']:
+                    mapping['data_type'] = mapping['source_type']
                 
                 # Update engine's type mapping
                 engine.update_column_types(
-                    record['source'],
-                    source_type=record['source_type'],
-                    target_type=record['target_type']
+                    mapping['source'],
+                    source_type=mapping['source_type'],
+                    target_type=mapping['target_type']
                 )
-                
-                mapping_records.append(record)
             
-            # Set mapping in engine with preserved join columns
+            # Set mapping in engine
             engine.set_mapping(mapping_records, join_columns)
             
             # Store updated mapping in session state
             st.session_state.column_mapping = mapping_records
-            
-            # Log join columns for debugging
-            st.session_state['debug_join_columns'] = join_columns
-            logger.info(f"Number of join columns after update: {len(join_columns)}")
             return True
             
         except Exception as e:
@@ -80,15 +68,6 @@ def update_column_mapping(edited_mapping, engine):
 def create_mapping_editor(mapping_data, target_columns, key_suffix=""):
     """Create a data editor for column mapping with error handling."""
     try:
-        # Convert join column to boolean and preserve status
-        if 'join' in mapping_data.columns:
-            mapping_data['join'] = mapping_data['join'].fillna(False).astype(bool)
-        else:
-            mapping_data['join'] = False
-            
-        # Store original join status
-        join_status = mapping_data['join'].copy()
-        
         # Automatically detect and normalize data types
         for row in mapping_data.itertuples():
             # Handle source type
@@ -113,11 +92,7 @@ def create_mapping_editor(mapping_data, target_columns, key_suffix=""):
                     mapping_data.at[row.Index, 'data_type'] = 'float64'
                 else:
                     mapping_data.at[row.Index, 'data_type'] = TYPE_MAPPING.get(str(row.source_type).lower(), 'string')
-        
-        # Restore join status
-        mapping_data['join'] = join_status
 
-        # Create data editor with enhanced configuration
         edited_mapping = st.data_editor(
             mapping_data,
             column_config={
@@ -133,8 +108,7 @@ def create_mapping_editor(mapping_data, target_columns, key_suffix=""):
                 ),
                 "join": st.column_config.CheckboxColumn(
                     "Join Column",
-                    default=False,
-                    help="⚠️ Select columns to match records between source and target (at least one required)"
+                    help="Use this column to match records between source and target"
                 ),
                 "source_type": st.column_config.SelectboxColumn(
                     "Source Type",
@@ -568,39 +542,6 @@ def main():
             use_sample = st.checkbox("📊 Use Sample Data for Testing", 
                                    value=False,
                                    help="Load pre-configured sample data to test the comparison functionality")
-            
-            # Track mode switch for data clearing
-            current_mode = "sample" if use_sample else "manual"
-            previous_mode = "sample" if st.session_state.get('previous_use_sample', False) else "manual"
-            
-            # Clear previous data when switching between sample and manual
-            if current_mode != previous_mode:
-                with st.spinner(f"🔄 Switching to {current_mode} data mode..."):
-                    import time
-                    
-                    # Clear all relevant session state
-                    keys_to_clear = [
-                        'column_mapping',
-                        'comparison_results',
-                        'source_data',
-                        'target_data',
-                        'report_paths',
-                        'zip_path',
-                        'filtered_source',
-                        'filtered_target'
-                    ]
-                    for key in keys_to_clear:
-                        if key in st.session_state:
-                            del st.session_state[key]
-                    
-                    # Update mode tracking
-                    st.session_state.previous_use_sample = use_sample
-                    
-                    # Show transition message
-                    st.success(f"✨ Switched to {current_mode} data mode. Previous data cleared.")
-                    time.sleep(0.5)  # Short delay for smooth transition
-                    st.rerun()  # Ensure clean UI state
-                
         with col2:
             if st.button("Load Sample", disabled=not use_sample):
                 try:
@@ -619,40 +560,22 @@ def main():
                     st.session_state.source_data = source_data
                     st.session_state.target_data = target_data
                     
-                    # Initialize comparison engine
-                    engine = ComparisonEngine(source_data, target_data)
-                    
-                    # Initialize mapping if not already present
-                    if 'column_mapping' not in st.session_state:
-                        st.session_state.column_mapping = engine.auto_map_columns()
-                    
                     st.success("✅ Sample data loaded successfully!")
-                    
-                    # Show initial mapping status
-                    st.info("🔄 Auto-mapping columns...")
-                    mapped_cols = sum(1 for m in st.session_state.column_mapping if m['target'])
-                    col1, col2, col3 = st.columns(3)
-                    with col1:
-                        st.metric("Auto-mapped Columns", f"{mapped_cols}/{len(st.session_state.column_mapping)}")
-                    with col2:
-                        join_cols = sum(1 for m in st.session_state.column_mapping if m.get('join', False))
-                        st.metric("Join Columns", join_cols)
-                    with col3:
-                        excluded_cols = sum(1 for m in st.session_state.column_mapping if m.get('exclude', False))
-                        st.metric("Excluded Columns", excluded_cols)
                     
                     # Show preview of sample data
                     st.markdown("### Data Preview")
-                    preview_col1, preview_col2 = st.columns(2)
-                    with preview_col1:
-                        st.markdown("### Source Data")
-                        st.dataframe(source_data.head(MAX_PREVIEW_ROWS), use_container_width=True)
-                    with preview_col2:
-                        st.markdown("### Target Data")
-                        st.dataframe(target_data.head(MAX_PREVIEW_ROWS), use_container_width=True)
+                    tab1, tab2 = st.tabs(["Source Data", "Target Data"])
+                    with tab1:
+                        st.dataframe(source_data.head(), use_container_width=True)
+                    with tab2:
+                        st.dataframe(target_data.head(), use_container_width=True)
                     
-                    # Show next steps guidance
-                    st.info("✨ Proceed to Column Mapping section below to configure comparison settings.")
+                    # Initialize comparison engine
+                    engine = ComparisonEngine(source_data, target_data)
+                    
+                    # Get automatic mapping
+                    if 'column_mapping' not in st.session_state:
+                        st.session_state.column_mapping = engine.auto_map_columns()
                     
                     # Show mapping section
                     st.subheader("2. Column Mapping")
@@ -677,118 +600,17 @@ def main():
                         excluded_cols = sum(1 for m in st.session_state.column_mapping if m['exclude'])
                         st.metric("Excluded Columns", excluded_cols)
                     
-                    # Convert mapping to DataFrame for validation
-                    mapping_df = pd.DataFrame(st.session_state.column_mapping)
-                    
-                    # Ensure join column is boolean
-                    mapping_df['join'] = mapping_df['join'].fillna(False).astype(bool)
-                    
-                    # Get selected join columns
-                    join_columns = list(mapping_df[mapping_df['join']]['source'])
-                    
-                    # Store join columns in session state for debugging
-                    st.session_state['current_join_columns'] = join_columns
-                    
-                    # Show join column status
-                    if not join_columns:
-                        st.warning("⚠️ Please select at least one join column for comparison", icon="⚠️")
-                        st.markdown("""
-                            <div style='background-color: #f0f2f6; padding: 10px; border-radius: 5px;'>
-                                <p><strong>Why do I need join columns?</strong></p>
-                                <p>Join columns are used to match records between source and target data. 
-                                Select columns that uniquely identify records (e.g., ID fields, primary keys).</p>
-                            </div>
-                        """, unsafe_allow_html=True)
-                    else:
-                        st.success(f"✅ Selected join columns: {', '.join(join_columns)}")
-                        # Debug information
-                        st.info(f"Debug: Found {len(join_columns)} join column(s): {join_columns}")
-                        # Compare button
-                        if st.button("Compare Data", key="sample_compare"):
+                    # Compare button
+                    if join_cols > 0:
+                        if st.button("Compare Data"):
                             try:
-                                # Validate join columns
-                                if not join_columns:
-                                    st.error("⚠️ No join columns selected. Please select at least one join column.")
-                                    return
+                                # Get selected join columns
+                                join_columns = [m['source'] for m in st.session_state.column_mapping if m['join']]
                                 
-                                # Log current join column status
-                                st.info(f"Starting comparison with join columns: {', '.join(join_columns)}")
+                                # Set mapping in comparison engine
+                                engine.set_mapping(st.session_state.column_mapping, join_columns)
                                 
-                                # Verify join columns exist in both datasets
-                                missing_in_source = [col for col in join_columns if col not in mapping_df['source'].values]
-                                missing_in_target = [col for col in join_columns if col not in st.session_state.target_data.columns]
-                                
-                                if missing_in_source or missing_in_target:
-                                    error_msg = []
-                                    if missing_in_source:
-                                        error_msg.append(f"Columns missing in source: {', '.join(missing_in_source)}")
-                                    if missing_in_target:
-                                        error_msg.append(f"Columns missing in target: {', '.join(missing_in_target)}")
-                                    st.error("⚠️ " + " | ".join(error_msg))
-                                    return
-                                
-                                # Convert mapping to records and set in engine
-                                mapping_records = mapping_df.to_dict('records')
-                                engine.set_mapping(mapping_records, join_columns)
-                                
-                                # Store updated mapping and join columns in session state
-                                st.session_state.column_mapping = mapping_records
-                                st.session_state['active_join_columns'] = join_columns
-                                
-                                # Show detailed join column analysis
-                                with st.expander("🔍 Join Column Analysis"):
-                                    st.markdown("### Selected Join Columns")
-                                    for col in join_columns:
-                                        source_unique = st.session_state.source_data[col].nunique()
-                                        target_unique = st.session_state.target_data[col].nunique()
-                                        source_nulls = st.session_state.source_data[col].isnull().sum()
-                                        target_nulls = st.session_state.target_data[col].isnull().sum()
-                                        
-                                        # Create container for join column analysis
-                                        with st.container():
-                                            with st.spinner(f"Analyzing join column: {col}"):
-                                                try:
-                                                    # Get sample values and calculate statistics safely
-                                                    source_sample = st.session_state.source_data[col].dropna().unique()[:3]
-                                                    target_sample = st.session_state.target_data[col].dropna().unique()[:3]
-                                                    
-                                                    # Calculate match ratio
-                                                    max_unique = max(source_unique, target_unique)
-                                                    match_ratio = (min(source_unique, target_unique) / max_unique) if max_unique > 0 else 0
-                                                    
-                                                    # Format sample values safely
-                                                    source_samples_str = ', '.join(str(x)[:50] for x in source_sample)  # Truncate long values
-                                                    target_samples_str = ', '.join(str(x)[:50] for x in target_sample)  # Truncate long values
-                                                    
-                                                    # Display results in Streamlit context
-                                                    st.markdown(f"""
-                                                        **{col}**
-                                                        - Unique values: Source ({source_unique}) | Target ({target_unique})
-                                                        - Null values: Source ({source_nulls}) | Target ({target_nulls})
-                                                        - Match ratio: {match_ratio:.2%}
-                                                        - Sample values:
-                                                          - Source: {source_samples_str}
-                                                          - Target: {target_samples_str}
-                                                    """)
-                                                    
-                                                    # Show warnings in a single container
-                                                    warning_container = st.container()
-                                                    with warning_container:
-                                                        if source_unique != target_unique:
-                                                            st.warning(f"⚠️ Different number of unique values in {col}")
-                                                        if source_nulls > 0 or target_nulls > 0:
-                                                            st.warning(f"⚠️ Found null values in {col}")
-                                                        if match_ratio < 0.9:  # Less than 90% match
-                                                            st.warning(f"⚠️ Low match ratio ({match_ratio:.2%}) for {col}")
-                                                            
-                                                except Exception as e:
-                                                    st.error(f"⚠️ Error analyzing join column {col}: {str(e)}")
-                                                    continue
-                                
-                                # Log confirmation of mapping update
-                                st.success(f"✅ Mapping updated with {len(join_columns)} join column(s)")
-                                
-                                # Perform comparison with updated mapping
+                                # Perform comparison
                                 comparison_results = engine.compare()
                                 st.session_state.comparison_results = comparison_results
                                 
@@ -923,42 +745,15 @@ def main():
             st.session_state.source_data = source_data
             st.session_state.target_data = target_data
             
-            # Initialize comparison engine
-            engine = ComparisonEngine(source_data, target_data)
-            
-            # Initialize mapping if not already present
-            if 'column_mapping' not in st.session_state:
-                st.session_state.column_mapping = engine.auto_map_columns()
-            
-            st.success("✅ Data loaded successfully!")
-            
-            # Show preview with mapping status
+            # Show preview
             st.subheader("Data Preview")
-            
-            # Show initial mapping status
-            st.info("🔄 Auto-mapping columns...")
-            mapped_cols = sum(1 for m in st.session_state.column_mapping if m['target'])
-            col1, col2, col3 = st.columns(3)
+            col1, col2 = st.columns(2)
             with col1:
-                st.metric("Auto-mapped Columns", f"{mapped_cols}/{len(st.session_state.column_mapping)}")
-            with col2:
-                join_cols = sum(1 for m in st.session_state.column_mapping if m.get('join', False))
-                st.metric("Join Columns", join_cols)
-            with col3:
-                excluded_cols = sum(1 for m in st.session_state.column_mapping if m.get('exclude', False))
-                st.metric("Excluded Columns", excluded_cols)
-            
-            # Show data preview
-            preview_col1, preview_col2 = st.columns(2)
-            with preview_col1:
                 st.markdown("### Source Data")
                 st.dataframe(source_data.head(MAX_PREVIEW_ROWS))
-            with preview_col2:
+            with col2:
                 st.markdown("### Target Data")
                 st.dataframe(target_data.head(MAX_PREVIEW_ROWS))
-            
-            # Show next steps guidance
-            st.info("✨ Data loaded successfully! Proceed to Column Mapping section below to configure comparison settings.")
                 
         except Exception as e:
             st.error(f"Error loading data: {str(e)}")
@@ -1026,33 +821,12 @@ def main():
         with col3:
             st.metric("Excluded Columns", excluded_cols)
         
-        # Convert mapping to DataFrame for validation
-        mapping_df = pd.DataFrame(st.session_state.column_mapping)
-        
-        # Ensure join column is boolean
-        mapping_df['join'] = mapping_df['join'].fillna(False).astype(bool)
-        
         # Get selected join columns
-        join_columns = list(mapping_df[mapping_df['join']]['source'])
+        join_columns = [m['source'] for m in st.session_state.column_mapping if m['join']]
         
-        # Store join columns in session state for debugging
-        st.session_state['current_join_columns'] = join_columns
-        
-        # Show join column status with clear visibility
-        if not join_columns:
-            st.warning("⚠️ Please select at least one join column for comparison", icon="⚠️")
-            # Add helper text with more details
-            st.markdown("""
-                <div style='background-color: #f0f2f6; padding: 10px; border-radius: 5px;'>
-                    <p><strong>Why do I need join columns?</strong></p>
-                    <p>Join columns are used to match records between source and target data. 
-                    Select columns that uniquely identify records (e.g., ID fields, primary keys).</p>
-                </div>
-            """, unsafe_allow_html=True)
+        if len(join_columns) == 0:
+            st.warning("Please select at least one join column")
         else:
-            st.success(f"✅ Selected join columns: {', '.join(join_columns)}")
-            # Debug information
-            st.info(f"Debug: Found {len(join_columns)} join column(s): {join_columns}")
             # Query Section (before Compare button)
             st.markdown("### Data Filtering (Optional)")
             enable_query = st.checkbox("Enable Data Filtering", help="Filter source or target data before comparison")
@@ -1135,91 +909,12 @@ SELECT * FROM data WHERE amount > 1000 AND status = 'active'
                         st.write("Original target data")
                         st.dataframe(st.session_state.target_data.head(10))
             
-            # Compare button with consistent key
-            if st.button("Compare Data", key="main_compare"):
+            # Compare button
+            if st.button("Compare"):
                 try:
-                    with st.spinner("Comparing data..."):
-                        # Validate join columns
-                        if not join_columns:
-                            st.error("⚠️ No join columns selected. Please select at least one join column.")
-                            return
-                        
-                        # Log current join column status
-                        st.info(f"Starting comparison with join columns: {', '.join(join_columns)}")
-                        
-                        # Verify join columns exist in both datasets
-                        missing_in_source = [col for col in join_columns if col not in mapping_df['source'].values]
-                        missing_in_target = [col for col in join_columns if col not in st.session_state.target_data.columns]
-                        
-                        if missing_in_source or missing_in_target:
-                            error_msg = []
-                            if missing_in_source:
-                                error_msg.append(f"Columns missing in source: {', '.join(missing_in_source)}")
-                            if missing_in_target:
-                                error_msg.append(f"Columns missing in target: {', '.join(missing_in_target)}")
-                            st.error("⚠️ " + " | ".join(error_msg))
-                            return
-                        
-                        # Convert mapping to records and set in engine
-                        mapping_records = mapping_df.to_dict('records')
-                        engine.set_mapping(mapping_records, join_columns)
-                        
-                        # Store updated mapping and join columns in session state
-                        st.session_state.column_mapping = mapping_records
-                        st.session_state['active_join_columns'] = join_columns
-                        
-                        # Show detailed join column analysis
-                        with st.expander("🔍 Join Column Analysis"):
-                            st.markdown("### Selected Join Columns")
-                            for col in join_columns:
-                                source_unique = st.session_state.source_data[col].nunique()
-                                target_unique = st.session_state.target_data[col].nunique()
-                                source_nulls = st.session_state.source_data[col].isnull().sum()
-                                target_nulls = st.session_state.target_data[col].isnull().sum()
-                                
-                                # Create container for join column analysis
-                                with st.container():
-                                    with st.spinner(f"Analyzing join column: {col}"):
-                                        try:
-                                            # Get sample values and calculate statistics safely
-                                            source_sample = st.session_state.source_data[col].dropna().unique()[:3]
-                                            target_sample = st.session_state.target_data[col].dropna().unique()[:3]
-                                            
-                                            # Calculate match ratio
-                                            max_unique = max(source_unique, target_unique)
-                                            match_ratio = (min(source_unique, target_unique) / max_unique) if max_unique > 0 else 0
-                                            
-                                            # Format sample values safely
-                                            source_samples_str = ', '.join(str(x)[:50] for x in source_sample)  # Truncate long values
-                                            target_samples_str = ', '.join(str(x)[:50] for x in target_sample)  # Truncate long values
-                                            
-                                            # Display results in Streamlit context
-                                            st.markdown(f"""
-                                                **{col}**
-                                                - Unique values: Source ({source_unique}) | Target ({target_unique})
-                                                - Null values: Source ({source_nulls}) | Target ({target_nulls})
-                                                - Match ratio: {match_ratio:.2%}
-                                                - Sample values:
-                                                  - Source: {source_samples_str}
-                                                  - Target: {target_samples_str}
-                                            """)
-                                            
-                                            # Show warnings in a single container
-                                            warning_container = st.container()
-                                            with warning_container:
-                                                if source_unique != target_unique:
-                                                    st.warning(f"⚠️ Different number of unique values in {col}")
-                                                if source_nulls > 0 or target_nulls > 0:
-                                                    st.warning(f"⚠️ Found null values in {col}")
-                                                if match_ratio < 0.9:  # Less than 90% match
-                                                    st.warning(f"⚠️ Low match ratio ({match_ratio:.2%}) for {col}")
-                                            
-                                        except Exception as e:
-                                            st.error(f"⚠️ Error analyzing join column {col}: {str(e)}")
-                                            continue
-                        
-                        # Log confirmation of mapping update
-                        st.success(f"✅ Mapping updated with {len(join_columns)} join column(s)")
+                    with st.spinner("Performing comparison..."):
+                        # Set mapping in comparison engine
+                        engine.set_mapping(st.session_state.column_mapping, join_columns)
                         
                         try:
                             # Perform comparison with queries
