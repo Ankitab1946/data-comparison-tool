@@ -648,8 +648,8 @@ class ReportGenerator:
                 # Combine all difference chunks
                 merged = pd.concat(dfs_to_process, ignore_index=True)
                 
-                # Create side-by-side comparison sheet
-                side_by_side_sheet = writer.book.add_worksheet('Side by Side Differences')
+                # Create differences sheet
+                diff_sheet = writer.book.add_worksheet('Differences')
                 
                 # Define formats
                 header_format = workbook.add_format({
@@ -671,8 +671,11 @@ class ReportGenerator:
                 # Write headers with enhanced information
                 headers = ['Column Name', 'Source Value', 'Target Value', 'Status', 'Change Type', 'Difference']
                 for col, header in enumerate(headers):
-                    side_by_side_sheet.write(0, col, header, header_format)
-                    side_by_side_sheet.set_column(col, col, 20)  # Set wider column width
+                    diff_sheet.write(0, col, header, header_format)
+                    diff_sheet.set_column(col, col, 20)  # Set wider column width
+
+                # Add filter to headers
+                diff_sheet.autofilter(0, 0, 0, len(headers) - 1)
                 
                 # Process each row and column for side-by-side comparison
                 row_idx = 1
@@ -698,21 +701,21 @@ class ReportGenerator:
                                 continue  # Skip if values are identical
                         
                         # Write the comparison row with difference highlighting
-                        side_by_side_sheet.write(row_idx, 0, col, cell_format)
+                        diff_sheet.write(row_idx, 0, col, cell_format)
                         
                         # Source value
                         source_str = str(source_val) if pd.notna(source_val) else ''
-                        side_by_side_sheet.write(row_idx, 1, source_str, 
-                                               modified_format if change_type in ['Updated', 'Left Only'] else cell_format)
+                        diff_sheet.write(row_idx, 1, source_str, 
+                                      modified_format if change_type in ['Updated', 'Left Only'] else cell_format)
                         
                         # Target value
                         target_str = str(target_val) if pd.notna(target_val) else ''
-                        side_by_side_sheet.write(row_idx, 2, target_str, 
-                                               modified_format if change_type in ['Updated', 'Right Only'] else cell_format)
+                        diff_sheet.write(row_idx, 2, target_str, 
+                                      modified_format if change_type in ['Updated', 'Right Only'] else cell_format)
                         
                         # Status and Change Type
-                        side_by_side_sheet.write(row_idx, 3, status, cell_format)
-                        side_by_side_sheet.write(row_idx, 4, change_type, cell_format)
+                        diff_sheet.write(row_idx, 3, status, cell_format)
+                        diff_sheet.write(row_idx, 4, change_type, cell_format)
                         
                         # Difference description
                         if change_type == 'Updated':
@@ -723,7 +726,7 @@ class ReportGenerator:
                             diff_desc = "Only in Target"
                         else:
                             diff_desc = ""
-                        side_by_side_sheet.write(row_idx, 5, diff_desc, diff_format)
+                        diff_sheet.write(row_idx, 5, diff_desc, diff_format)
                         
                         row_idx += 1
                 
