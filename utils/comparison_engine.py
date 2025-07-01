@@ -1858,6 +1858,12 @@ class ComparisonEngine:
             
         for m in self.mapping:
             if m['source'] == column and m.get('editable', True):
+                # Keep existing types if they're float
+                if m['source_type'] == 'float' and not source_type:
+                    source_type = 'float'
+                if m['target_type'] == 'float' and not target_type:
+                    target_type = 'float'
+                
                 # Convert 'object' to 'string'
                 if source_type == 'object':
                     source_type = 'string'
@@ -1875,6 +1881,11 @@ class ComparisonEngine:
                 # Determine new mapped type
                 new_source_type = source_type or m['source_type']
                 new_target_type = target_type or m['target_type']
+                
+                # Preserve float type if either source or target is float
+                if new_source_type == 'float' or new_target_type == 'float':
+                    m['data_type'] = 'float'
+                    return
                 
                 # Check for memory-intensive numeric types
                 if new_source_type in ['float64', 'int64'] or new_target_type in ['float64', 'int64']:
