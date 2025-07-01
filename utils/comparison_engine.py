@@ -1751,32 +1751,34 @@ class ComparisonEngine:
             is_sql_source = any(sql_type in source_type.lower() for sql_type in self.SQL_TYPE_MAPPING.keys())
             is_sql_target = any(sql_type in target_type.lower() for sql_type in self.SQL_TYPE_MAPPING.keys())
             
-            # Get mapped types
-            source_mapped = self._get_mapped_type(s_col, source_type, is_sql_source)
-            target_mapped = self._get_mapped_type(s_col, target_type, is_sql_target) if t_col else source_mapped
-            
-            # Store original types
+            # Store original types before any conversion
             original_source_type = source_type
             original_target_type = target_type
-            
-            # Determine final type
-            if source_mapped == target_mapped:
-                mapped_type = source_mapped
+
+            # Special handling for float types
+            if 'float' in source_type.lower() or 'float' in target_type.lower():
+                source_mapped = 'float'
+                target_mapped = 'float'
+                mapped_type = 'float'
             else:
-                # For mismatched types, prefer string for text-like columns
-                if any(t in str(source_type).lower() or t in str(target_type).lower() 
-                      for t in ['char', 'text', 'string', 'object']):
-                    mapped_type = 'string'
-                    original_source_type = 'string'
-                    original_target_type = 'string'
+                # Get mapped types for non-float columns
+                source_mapped = self._get_mapped_type(s_col, source_type, is_sql_source)
+                target_mapped = self._get_mapped_type(s_col, target_type, is_sql_target) if t_col else source_mapped
+                
+                # Determine final type
+                if source_mapped == target_mapped:
+                    mapped_type = source_mapped
                 else:
-                    # For numeric types, use the wider type
-                    if all(t in ['int32', 'int64', 'float32', 'float64'] for t in [source_mapped, target_mapped]):
-                        mapped_type = 'float64'  # widest numeric type
+                    # For mismatched types, prefer string for text-like columns
+                    if any(t in str(source_type).lower() or t in str(target_type).lower() 
+                          for t in ['char', 'text', 'string', 'object']):
+                        mapped_type = 'string'
                     else:
-                        mapped_type = 'string'  # fallback for incompatible types
-                        original_source_type = 'string'
-                        original_target_type = 'string'
+                        # For numeric types, use the wider type
+                        if all(t in ['int32', 'int64', 'float32', 'float64'] for t in [source_mapped, target_mapped]):
+                            mapped_type = 'float'  # Use float for numeric types
+                        else:
+                            mapped_type = 'string'  # fallback for incompatible types
 
             # Create mapping with editable types
             mapping_entry = {
