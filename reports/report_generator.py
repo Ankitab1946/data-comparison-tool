@@ -645,107 +645,137 @@ class ReportGenerator:
                     
                     return str(report_path)
                 
-                # Combine all difference chunks
-                merged = pd.concat(dfs_to_process, ignore_index=True)
-                
-                # Create differences sheet
-                diff_sheet = writer.book.add_worksheet('Differences')
-                
-                # Define formats
-                header_format = workbook.add_format({
-                    'bold': True,
-                    'bg_color': '#D3D3D3',
-                    'border': 1,
-                    'align': 'center'
-                })
-                
-                modified_format = workbook.add_format({
-                    'bg_color': 'FFFF00',  # Yellow
-                    'border': 1
-                })
-                
-                cell_format = workbook.add_format({
-                    'border': 1
-                })
-                
-                # Write headers with enhanced information
-                headers = ['Column Name', 'Source Value', 'Target Value', 'Status', 'Change Type', 'Difference']
-                for col, header in enumerate(headers):
-                    diff_sheet.write(0, col, header, header_format)
-                    diff_sheet.set_column(col, col, 20)  # Set wider column width
-
-                # Add filter to headers
-                diff_sheet.autofilter(0, 0, 0, len(headers) - 1)
-                
-                # Process each row and column for side-by-side comparison
-                row_idx = 1
-                for _, diff_row in merged.iterrows():
-                    status = diff_row['Status']
+                try:
+                    # Combine all difference chunks
+                    merged = pd.concat(dfs_to_process, ignore_index=True)
                     
-                    # Process each column in source dataframe
-                    for col in source_df.columns:
-                        source_val = diff_row.get(col)
-                        target_val = diff_row.get(f"{col}_target") if f"{col}_target" in diff_row else None
+                    # Save to Excel with xlsxwriter engine
+                    with pd.ExcelWriter(str(report_path), engine='xlsxwriter') as writer:
+                        # Create summary sheet first
+                        summary_sheet = writer.book.add_worksheet('Summary')
                         
-                        # Determine change type
-                        if status == 'Left Only':
-                            change_type = 'Left Only'
-                        elif status == 'Right Only':
-                            change_type = 'Right Only'
+                        # Create formats
+                        header_format = writer.book.add_format({
+                            'bold': True,
+                            'font_size': 12,
+                            'bg_color': '#D3D3D3',
+                            'border': 1,
+                            'align': 'center',
+                            'valign': 'vcenter'
+                        })
+                        
+                        cell_format = writer.book.add_format({
+                            'font_size': 11,
+                            'border': 1,
+                            'align': 'left',
+                            'valign': 'vcenter'
+                        })
+                        
+                        modified_format = writer.book.add_format({
+                            'bg_color': 'FFFF00',  # Yellow
+                            'border': 1
+                        })
+                        
+                        diff_format = writer.book.add_format({
+                            'border': 1,
+                            'text_wrap': True,
+                            'align': 'left',
+                            'valign': 'top',
+                            'font_size': 10,
+                            'bg_color': 'F0F0F0'  # Light gray background
+                        })
+                        
+                        # Write summary information
+                        summary_sheet.merge_range('A1:B1', 'Comparison Results', header_format)
+                        
+                        # Write record counts
+                        row = 2
+                        summary_sheet.write(row, 0, 'Total Records:', cell_format)
+                        summary_sheet.write(row, 1, f"Source: {len(source_df)}, Target: {len(target_df)}", cell_format)
+                        
+                        # Write difference status
+                        row = 4
+                        summary_sheet.write(row, 0, 'Status:', cell_format)
+                        
+                        if has_differences:
+                            # Create differences sheet
+                            diff_sheet = writer.book.add_worksheet('Differences')
+                            
+                            # Write headers with enhanced information
+                            headers = ['Column Name', 'Source Value', 'Target Value', 'Status', 'Change Type', 'Difference']
+                            for col, header in enumerate(headers):
+                                diff_sheet.write(0, col, header, header_format)
+                                diff_sheet.set_column(col, col, 20)  # Set wider column width
+                            
+                            # Add filter to headers
+                            diff_sheet.autofilter(0, 0, 0, len(headers) - 1)
+                            
+                            # Write differences
+                            row_idx = 1
+                            for _, row in merged.iterrows():
+                                for col in source_df.columns:
+                                    source_val = row.get(col)
+                                    target_val = row.get(f"{col}_target") if f"{col}_target" in row else None
+                                    
+                                    # Determine change type
+                                    if row['Status'] == 'Left Only':
+                                        change_type = 'Left Only'
+                                    elif row['Status'] == 'Right Only':
+                                        change_type = 'Right Only'
+                                    elif source_val != target_val:
+                                        change_type = 'Updated'
+                                    else:
+                                        continue
+                                    
+                                    # Write the difference row
+                                    diff_sheet.write(row_idx, 0, col, cell_format)
+                                    diff_sheet.write(row_idx, 1, str(source_val) if pd.notna(source_val) else '', 
+                                                   modified_format if change_type in ['Updated', 'Left Only'] else cell_format)
+                                    diff_sheet.write(row_idx, 2, str(target_val) if pd.notna(target_val) else '', 
+                                                   modified_format if change_type in ['Updated', 'Right Only'] else cell_format)
+                                    diff_sheet.write(row_idx, 3, row['Status'], cell_format)
+                                    diff_sheet.write(row_idx, 4, change_type, cell_format)
+                                    
+                                    # Write difference description
+                                    if change_type == 'Updated':
+                                        diff_desc = f"Changed: {str(source_val)} → {str(target_val)}"
+                                    elif change_type == 'Left Only':
+                                        diff_desc = "Only in Source"
+                                    elif change_type == 'Right Only':
+                                        diff_desc = "Only in Target"
+                                    else:
+                                        diff_desc = ""
+                                    diff_sheet.write(row_idx, 5, diff_desc, diff_format)
+                                    
+                                    row_idx += 1
+                            
+                            # Write summary statistics
+                            left_only_count = sum(1 for _, r in merged.iterrows() if r['Status'] == 'Left Only')
+                            right_only_count = sum(1 for _, r in merged.iterrows() if r['Status'] == 'Right Only')
+                            updated_count = sum(1 for _, r in merged.iterrows() if r['Status'] == 'Updated')
+                            
+                            status_text = "Differences found:\n"
+                            if left_only_count > 0:
+                                status_text += f"- {left_only_count} records only in Source\n"
+                            if right_only_count > 0:
+                                status_text += f"- {right_only_count} records only in Target\n"
+                            if updated_count > 0:
+                                status_text += f"- {updated_count} records with updates"
+                            
+                            summary_sheet.write(4, 1, status_text, diff_format)
                         else:
-                            if pd.isna(source_val) and pd.isna(target_val):
-                                continue  # Skip if both values are null
-                            elif source_val != target_val:
-                                change_type = 'Updated'
-                            else:
-                                continue  # Skip if values are identical
+                            summary_sheet.write(4, 1, 'There is No Differences found.', cell_format)
                         
-                        # Write the comparison row with difference highlighting
-                        diff_sheet.write(row_idx, 0, col, cell_format)
+                        # Set column widths for better readability
+                        summary_sheet.set_column(0, 0, 20)
+                        summary_sheet.set_column(1, 1, 60)
                         
-                        # Source value
-                        source_str = str(source_val) if pd.notna(source_val) else ''
-                        diff_sheet.write(row_idx, 1, source_str, 
-                                      modified_format if change_type in ['Updated', 'Left Only'] else cell_format)
-                        
-                        # Target value
-                        target_str = str(target_val) if pd.notna(target_val) else ''
-                        diff_sheet.write(row_idx, 2, target_str, 
-                                      modified_format if change_type in ['Updated', 'Right Only'] else cell_format)
-                        
-                        # Status and Change Type
-                        diff_sheet.write(row_idx, 3, status, cell_format)
-                        diff_sheet.write(row_idx, 4, change_type, cell_format)
-                        
-                        # Difference description
-                        if change_type == 'Updated':
-                            diff_desc = f"Changed: {source_str} → {target_str}"
-                        elif change_type == 'Left Only':
-                            diff_desc = "Only in Source"
-                        elif change_type == 'Right Only':
-                            diff_desc = "Only in Target"
-                        else:
-                            diff_desc = ""
-                        diff_sheet.write(row_idx, 5, diff_desc, diff_format)
-                        
-                        row_idx += 1
+                except Exception as e:
+                    logger.error(f"Error processing difference report: {str(e)}")
+                    raise ValueError(f"Failed to generate difference report: {str(e)}")
                 
-                # Define status colors and formats for difference sheets
-                status_colors = {
-                    'Left Only': 'FFB6C1',   # Light pink
-                    'Right Only': '90EE90',  # Light green
-                    'Updated': 'FFD700'      # Gold
-                }
+
                 
-                # Create special format for difference column
-                diff_format = writer.book.add_format({
-                    'border': 1,
-                    'text_wrap': True,
-                    'align': 'left',
-                    'valign': 'top',
-                    'font_size': 10,
-                    'bg_color': 'F0F0F0'  # Light gray background
-                })
                 
                 # Create side-by-side comparison
                 comparison_data = []
@@ -841,12 +871,102 @@ class ReportGenerator:
                     
                     return str(report_path)
                 
-                # Create side-by-side comparison DataFrame
-                comparison_df = pd.DataFrame(comparison_data)
-                
-                # Calculate number of chunks needed
-                total_rows = len(merged)
-                num_chunks = (total_rows - 1) // CHUNK_SIZE + 1
+                # Create side-by-side comparison DataFrame if there are differences
+                if has_differences:
+                    comparison_df = pd.DataFrame(comparison_data)
+                    
+                    # Calculate number of chunks needed
+                    total_rows = len(merged)
+                    num_chunks = (total_rows - 1) // CHUNK_SIZE + 1
+                    
+                    # Write headers with enhanced information
+                    headers = ['Column Name', 'Source Value', 'Target Value', 'Status', 'Change Type', 'Difference']
+                    for col, header in enumerate(headers):
+                        diff_sheet.write(0, col, header, header_format)
+                        diff_sheet.set_column(col, col, 20)  # Set wider column width
+
+                    # Add filter to headers
+                    diff_sheet.autofilter(0, 0, 0, len(headers) - 1)
+
+                    # Write differences to the Differences sheet
+                    row_idx = 1
+                    for _, row in merged.iterrows():
+                        for col in source_df.columns:
+                            source_val = row.get(col)
+                            target_val = row.get(f"{col}_target") if f"{col}_target" in row else None
+                            
+                            # Determine change type and write to sheet
+                            if row['Status'] == 'Left Only':
+                                change_type = 'Left Only'
+                            elif row['Status'] == 'Right Only':
+                                change_type = 'Right Only'
+                            elif source_val != target_val:
+                                change_type = 'Updated'
+                            else:
+                                continue
+                            
+                            # Write the difference row
+                            diff_sheet.write(row_idx, 0, col, cell_format)
+                            diff_sheet.write(row_idx, 1, str(source_val) if pd.notna(source_val) else '', 
+                                           modified_format if change_type in ['Updated', 'Left Only'] else cell_format)
+                            diff_sheet.write(row_idx, 2, str(target_val) if pd.notna(target_val) else '', 
+                                           modified_format if change_type in ['Updated', 'Right Only'] else cell_format)
+                            diff_sheet.write(row_idx, 3, row['Status'], cell_format)
+                            diff_sheet.write(row_idx, 4, change_type, cell_format)
+                            
+                            # Write difference description
+                            if change_type == 'Updated':
+                                diff_desc = f"Changed: {str(source_val)} → {str(target_val)}"
+                            elif change_type == 'Left Only':
+                                diff_desc = "Only in Source"
+                            elif change_type == 'Right Only':
+                                diff_desc = "Only in Target"
+                            else:
+                                diff_desc = ""
+                            diff_sheet.write(row_idx, 5, diff_desc, diff_format)
+                            
+                            row_idx += 1
+
+                    # Write summary sheet
+                    summary_sheet = writer.book.add_worksheet('Summary')
+                        
+                        # Write each row of differences
+                        for _, row in chunk.iterrows():
+                            for col in source_df.columns:
+                                source_val = row.get(col)
+                                target_val = row.get(f"{col}_target") if f"{col}_target" in row else None
+                                
+                                # Determine change type and write to sheet
+                                if row['Status'] == 'Left Only':
+                                    change_type = 'Left Only'
+                                elif row['Status'] == 'Right Only':
+                                    change_type = 'Right Only'
+                                elif source_val != target_val:
+                                    change_type = 'Updated'
+                                else:
+                                    continue
+                                
+                                # Write the difference row
+                                diff_sheet.write(row_idx, 0, col, cell_format)
+                                diff_sheet.write(row_idx, 1, str(source_val) if pd.notna(source_val) else '', 
+                                               modified_format if change_type in ['Updated', 'Left Only'] else cell_format)
+                                diff_sheet.write(row_idx, 2, str(target_val) if pd.notna(target_val) else '', 
+                                               modified_format if change_type in ['Updated', 'Right Only'] else cell_format)
+                                diff_sheet.write(row_idx, 3, row['Status'], cell_format)
+                                diff_sheet.write(row_idx, 4, change_type, cell_format)
+                                
+                                # Write difference description
+                                if change_type == 'Updated':
+                                    diff_desc = f"Changed: {str(source_val)} → {str(target_val)}"
+                                elif change_type == 'Left Only':
+                                    diff_desc = "Only in Source"
+                                elif change_type == 'Right Only':
+                                    diff_desc = "Only in Target"
+                                else:
+                                    diff_desc = ""
+                                diff_sheet.write(row_idx, 5, diff_desc, diff_format)
+                                
+                                row_idx += 1
                 
             except Exception as e:
                 logger.error(f"Error processing difference chunks: {str(e)}")
