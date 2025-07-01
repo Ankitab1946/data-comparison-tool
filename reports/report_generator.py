@@ -2881,142 +2881,669 @@ class ReportGenerator:
             logger.error(f"Error generating regression report: {str(e)}")
             raise
 
+    # def generate_difference_report(self, source_df: pd.DataFrame, target_df: pd.DataFrame, 
+    #                              join_columns: List[str], source_query: str = None, 
+    #                              target_query: str = None) -> str:
+    #     """Generate enhanced side-by-side difference report."""
+    #     report_path = None
+    #     try:
+    #         if not isinstance(source_df, pd.DataFrame) or not isinstance(target_df, pd.DataFrame):
+    #             raise ValueError("Both source and target must be pandas DataFrames")
+                
+    #         # Execute queries if provided
+    #         try:
+    #             if source_query:
+    #                 logger.info(f"Executing source query: {source_query}")
+    #                 source_df = self.execute_query(source_df, source_query)
+    #                 if source_df.empty:
+    #                     logger.warning("Source query returned no results")
+                
+    #             if target_query:
+    #                 logger.info(f"Executing target query: {target_query}")
+    #                 target_df = self.execute_query(target_df, target_query)
+    #                 if target_df.empty:
+    #                     logger.warning("Target query returned no results")
+    #         except Exception as e:
+    #             logger.error(f"Error executing queries: {str(e)}")
+    #             raise ValueError(f"Query execution failed: {str(e)}")
+                
+    #         if source_df.empty or target_df.empty:
+    #             logger.info("No data to compare in difference report")
+    #             return None
+                
+    #         if not join_columns or not isinstance(join_columns, list):
+    #             raise ValueError("join_columns must be a non-empty list")
+
+    #         logger.info(f"Source columns: {list(source_df.columns)}")
+    #         logger.info(f"Target columns: {list(target_df.columns)}")
+    #         logger.info(f"Join columns requested: {join_columns}")
+            
+    #         # Case-insensitive column mapping
+    #         source_cols_lower = {col.lower(): col for col in source_df.columns}
+    #         target_cols_lower = {col.lower(): col for col in target_df.columns}
+            
+    #         logger.info(f"Source columns (lowercase): {list(source_cols_lower.keys())}")
+    #         logger.info(f"Target columns (lowercase): {list(target_cols_lower.keys())}")
+            
+    #         # Create mapping for join columns
+    #         join_col_mapping = {}
+    #         missing_in_source = []
+    #         missing_in_target = []
+            
+    #         try:
+    #             for join_col in join_columns:
+    #                 join_col_lower = join_col.lower()
+    #                 logger.info(f"Processing join column: {join_col} (lowercase: {join_col_lower})")
+                    
+    #                 # Find matching source column
+    #                 source_match = source_cols_lower.get(join_col_lower)
+    #                 if not source_match:
+    #                     logger.warning(f"Join column {join_col} not found in source columns")
+    #                     missing_in_source.append(join_col)
+    #                     continue
+                    
+    #                 # Find matching target column
+    #                 target_match = target_cols_lower.get(join_col_lower)
+    #                 if not target_match:
+    #                     logger.warning(f"Join column {join_col} not found in target columns")
+    #                     missing_in_target.append(join_col)
+    #                     continue
+                    
+    #                 logger.info(f"Mapped {join_col}: source={source_match}, target={target_match}")
+    #                 join_col_mapping[source_match] = target_match
+                
+    #             # Check for missing columns after processing all join columns
+    #             if missing_in_source or missing_in_target:
+    #                 error_msg = []
+    #                 if missing_in_source:
+    #                     error_msg.append(f"Join columns missing in source: {', '.join(missing_in_source)}")
+    #                 if missing_in_target:
+    #                     error_msg.append(f"Join columns missing in target: {', '.join(missing_in_target)}")
+    #                 raise ValueError('\n'.join(error_msg))
+                    
+    #         except Exception as e:
+    #             logger.error(f"Error during column mapping: {str(e)}")
+    #             raise ValueError(f"Failed to process join columns: {str(e)}")
+            
+    #         # Map columns with case-insensitive matching
+    #         logger.info("=== Column Mapping Process ===")
+    #         logger.info(f"Source columns: {list(source_df.columns)}")
+    #         logger.info(f"Target columns: {list(target_df.columns)}")
+    #         logger.info(f"Join columns: {join_columns}")
+
+    #         # Normalize column names to lowercase for comparison
+    #         source_df.columns = [col.strip().lower() for col in source_df.columns]
+    #         target_df.columns = [col.strip().lower() for col in target_df.columns]
+    #         join_columns = [col.strip().lower() for col in join_columns]
+            
+    #         # Create column mapping
+    #         join_col_mapping = {}
+    #         missing_cols = []
+            
+    #         for col in join_columns:
+    #             if col in source_df.columns and col in target_df.columns:
+    #                 join_col_mapping[col] = col
+    #                 logger.info(f"Mapped: {col} -> {col}")
+    #             else:
+    #                 if col not in source_df.columns:
+    #                     missing_cols.append(f"'{col}' (in source)")
+    #                 if col not in target_df.columns:
+    #                     missing_cols.append(f"'{col}' (in target)")
+
+    #         if missing_cols:
+    #             error_msg = f"Column mapping failed. Missing columns: {', '.join(missing_cols)}"
+    #             logger.error(error_msg)
+    #             raise ValueError(error_msg)
+
+    #         if not join_col_mapping:
+    #             error_msg = "No valid column mappings found between source and target"
+    #             logger.error(error_msg)
+    #             raise ValueError(error_msg)
+
+    #         # Create renamed target dataframe
+    #         target_df_renamed = target_df.copy()
+    #         rename_map = {v: k for k, v in join_col_mapping.items()}
+            
+    #         logger.info("=== Column Mapping ===")
+    #         logger.info(f"Final mapping: {join_col_mapping}")
+    #         logger.info(f"Rename map: {rename_map}")
+
+    #         # Rename target columns
+    #         target_df_renamed = target_df_renamed.rename(columns=rename_map)
+            
+    #         # Update join columns to use source column names
+    #         join_columns = list(join_col_mapping.keys())
+
+    #         logger.info("=== Final State ===")
+    #         logger.info(f"Final join columns: {join_columns}")
+    #         logger.info(f"Renamed target columns: {target_df_renamed.columns.tolist()}")
+
+    #         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    #         report_path = self.output_dir / f"DifferenceReport_{timestamp}.xlsx"
+
+    #         # Constants for Excel limitations - reduced for better performance
+    #         MAX_ROWS = 100000  # Significantly reduced from Excel's limit for stability
+    #         CHUNK_SIZE = 90000  # Slightly less than max for headers and formatting
+            
+    #         # Process data in chunks to avoid memory issues
+    #         dfs_to_process = []
+            
+    #         # Handle data types for join columns
+    #         for col in join_columns:
+    #             source_type = source_df[col].dtype
+    #             target_type = target_df[col].dtype
+                
+    #             # Check if either column contains float values
+    #             is_source_float = source_df[col].apply(lambda x: isinstance(x, float) or (isinstance(x, str) and '.' in x)).any()
+    #             is_target_float = target_df[col].apply(lambda x: isinstance(x, float) or (isinstance(x, str) and '.' in x)).any()
+                
+    #             if is_source_float or is_target_float:
+    #                 # Convert both columns to float
+    #                 logger.info(f"Converting column {col} to float type")
+    #                 try:
+    #                     source_df[col] = pd.to_numeric(source_df[col], errors='coerce')
+    #                     target_df[col] = pd.to_numeric(target_df[col], errors='coerce')
+    #                 except Exception as e:
+    #                     logger.warning(f"Could not convert column {col} to float: {str(e)}")
+    #             elif source_type != target_type:
+    #                 # For non-float columns, convert to string if types don't match
+    #                 logger.info(f"Converting column {col} to string type")
+    #                 source_df[col] = source_df[col].astype(str)
+    #                 target_df[col] = target_df[col].astype(str)
+
+    #         for start_idx in range(0, len(source_df), CHUNK_SIZE):
+    #             try:
+    #                 # Get chunks of both dataframes
+    #                 source_chunk = source_df.iloc[start_idx:start_idx + CHUNK_SIZE]
+                    
+    #                 try:
+    #                     logger.info(f"Processing chunk {chunk_idx + 1}")
+                        
+    #                     # Verify columns before merge
+    #                     for col in join_columns:
+    #                         if col not in source_chunk.columns:
+    #                             raise ValueError(f"Join column '{col}' missing from source chunk")
+    #                         if col not in target_df_renamed.columns:
+    #                             raise ValueError(f"Join column '{col}' missing from target")
+                            
+    #                         # Convert to string if data types don't match
+    #                         if source_chunk[col].dtype != target_df_renamed[col].dtype:
+    #                             logger.info(f"Converting {col} to string type for comparison")
+    #                             source_chunk[col] = source_chunk[col].astype(str)
+    #                             target_df_renamed[col] = target_df_renamed[col].astype(str)
+                        
+    #                     # Perform merge with explicit column list
+    #                     merge_cols = join_columns.copy()  # Use only mapped columns
+    #                     chunk_merged = source_chunk.merge(
+    #                         target_df_renamed,
+    #                         on=merge_cols,
+    #                         how='outer',
+    #                         indicator=True,
+    #                         suffixes=('_source', '_target')
+    #                     )
+                        
+    #                     logger.info(f"Merge successful - Shape: {chunk_merged.shape}")
+                        
+    #                 except Exception as merge_error:
+    #                     logger.error(f"Error during merge operation: {str(merge_error)}")
+    #                     raise ValueError(f"Failed to merge data: {str(merge_error)}")
+                    
+    #                 # Create comparison status column with required classifications
+    #                 chunk_merged['Status'] = chunk_merged['_merge'].map({
+    #                     'left_only': 'Left Only',
+    #                     'right_only': 'Right Only',
+    #                     'both': 'Updated'
+    #                 })
+                    
+    #                 # Remove the merge indicator column
+    #                 chunk_merged = chunk_merged.drop('_merge', axis=1)
+                    
+    #                 # Keep all rows to properly track differences
+    #                 diff_rows = chunk_merged.copy()
+    #                 # Mark rows that have actual differences
+    #                 diff_rows['has_diff'] = False
+    #                 for col in source_df.columns:
+    #                     target_col = f"{col}_target" if f"{col}_target" in diff_rows else None
+    #                     if target_col:
+    #                         diff_rows['has_diff'] |= (diff_rows[col] != diff_rows[target_col])
+    #                 # Keep rows that are either unmatched or have differences
+    #                 diff_rows = diff_rows[
+    #                     (diff_rows['Status'].isin(['Left Only', 'Right Only'])) |
+    #                     ((diff_rows['Status'] == 'Updated') & diff_rows['has_diff'])
+    #                 ]
+    #                 if not diff_rows.empty:
+    #                     dfs_to_process.append(diff_rows)
+                        
+    #             except Exception as chunk_error:
+    #                 logger.error(f"Error processing chunk starting at index {start_idx}: {str(chunk_error)}")
+    #                 continue
+            
+    #         try:
+    #             # If there are no differences
+    #             if not dfs_to_process:
+    #                 logger.info("No differences found between source and target")
+                    
+    #                 # Create Excel file with summary only
+    #                 with pd.ExcelWriter(str(report_path), engine='xlsxwriter') as writer:
+    #                     # Create summary sheet
+    #                     summary_sheet = writer.book.add_worksheet('Summary')
+                        
+    #                     # Create formats
+    #                     header_format = writer.book.add_format({
+    #                         'bold': True,
+    #                         'font_size': 12,
+    #                         'bg_color': '#D3D3D3',
+    #                         'border': 1,
+    #                         'align': 'center',
+    #                         'valign': 'vcenter'
+    #                     })
+                        
+    #                     cell_format = writer.book.add_format({
+    #                         'font_size': 11,
+    #                         'border': 1,
+    #                         'align': 'left',
+    #                         'valign': 'vcenter'
+    #                     })
+                        
+    #                     # Write summary information
+    #                     summary_sheet.merge_range('A1:B1', 'Comparison Results', header_format)
+    #                     summary_sheet.write(2, 0, 'Status:', cell_format)
+    #                     summary_sheet.write(2, 1, 'There is No Differences found.', cell_format)
+                        
+    #                     summary_sheet.write(4, 0, 'Source Records:', cell_format)
+    #                     summary_sheet.write(4, 1, len(source_df), cell_format)
+                        
+    #                     summary_sheet.write(5, 0, 'Target Records:', cell_format)
+    #                     summary_sheet.write(5, 1, len(target_df), cell_format)
+                        
+    #                     summary_sheet.write(7, 0, 'Join Columns:', cell_format)
+    #                     summary_sheet.write(7, 1, ', '.join(join_columns), cell_format)
+                        
+    #                     # Set column widths
+    #                     summary_sheet.set_column(0, 0, 20)
+    #                     summary_sheet.set_column(1, 1, 40)
+                    
+    #                 return str(report_path)
+                
+    #             # Combine all difference chunks
+    #             merged = pd.concat(dfs_to_process, ignore_index=True)
+                
+    #             # Create differences sheet
+    #             diff_sheet = writer.book.add_worksheet('Differences')
+                
+    #             # Define formats
+    #             header_format = writer.book.add_format({
+    #                 'bold': True,
+    #                 'bg_color': '#D3D3D3',
+    #                 'border': 1,
+    #                 'align': 'center'
+    #             })
+                
+    #             modified_format = workbook.add_format({
+    #                 'bg_color': 'FFFF00',  # Yellow
+    #                 'border': 1
+    #             })
+                
+    #             cell_format = workbook.add_format({
+    #                 'border': 1
+    #             })
+                
+    #             # Write headers with enhanced information
+    #             headers = ['Column Name', 'Source Value', 'Target Value', 'Status', 'Change Type', 'Difference']
+    #             for col, header in enumerate(headers):
+    #                 diff_sheet.write(0, col, header, header_format)
+    #                 diff_sheet.set_column(col, col, 20)  # Set wider column width
+
+    #             # Add filter to headers
+    #             diff_sheet.autofilter(0, 0, 0, len(headers) - 1)
+                
+    #             # Process each row and column for side-by-side comparison
+    #             row_idx = 1
+    #             for _, diff_row in merged.iterrows():
+    #                 status = diff_row['Status']
+                    
+    #                 # Process each column in source dataframe
+    #                 for col in source_df.columns:
+    #                     source_val = diff_row.get(col)
+    #                     target_val = diff_row.get(f"{col}_target") if f"{col}_target" in diff_row else None
+                        
+    #                     # Determine change type
+    #                     if status == 'Left Only':
+    #                         change_type = 'Left Only'
+    #                     elif status == 'Right Only':
+    #                         change_type = 'Right Only'
+    #                     else:
+    #                         if pd.isna(source_val) and pd.isna(target_val):
+    #                             continue  # Skip if both values are null
+    #                         elif source_val != target_val:
+    #                             change_type = 'Updated'
+    #                         else:
+    #                             continue  # Skip if values are identical
+                        
+    #                     # Write the comparison row with difference highlighting
+    #                     diff_sheet.write(row_idx, 0, col, cell_format)
+                        
+    #                     # Source value
+    #                     source_str = str(source_val) if pd.notna(source_val) else ''
+    #                     diff_sheet.write(row_idx, 1, source_str, 
+    #                                   modified_format if change_type in ['Updated', 'Left Only'] else cell_format)
+                        
+    #                     # Target value
+    #                     target_str = str(target_val) if pd.notna(target_val) else ''
+    #                     diff_sheet.write(row_idx, 2, target_str, 
+    #                                   modified_format if change_type in ['Updated', 'Right Only'] else cell_format)
+                        
+    #                     # Status and Change Type
+    #                     diff_sheet.write(row_idx, 3, status, cell_format)
+    #                     diff_sheet.write(row_idx, 4, change_type, cell_format)
+                        
+    #                     # Difference description
+    #                     if change_type == 'Updated':
+    #                         diff_desc = f"Changed: {source_str} → {target_str}"
+    #                     elif change_type == 'Left Only':
+    #                         diff_desc = "Only in Source"
+    #                     elif change_type == 'Right Only':
+    #                         diff_desc = "Only in Target"
+    #                     else:
+    #                         diff_desc = ""
+    #                     diff_sheet.write(row_idx, 5, diff_desc, diff_format)
+                        
+    #                     row_idx += 1
+                
+    #             # Define status colors and formats for difference sheets
+    #             status_colors = {
+    #                 'Left Only': 'FFB6C1',   # Light pink
+    #                 'Right Only': '90EE90',  # Light green
+    #                 'Updated': 'FFD700'      # Gold
+    #             }
+                
+    #             # Create special format for difference column
+    #             diff_format = writer.book.add_format({
+    #                 'border': 1,
+    #                 'text_wrap': True,
+    #                 'align': 'left',
+    #                 'valign': 'top',
+    #                 'font_size': 10,
+    #                 'bg_color': 'F0F0F0'  # Light gray background
+    #             })
+                
+    #             # Create side-by-side comparison
+    #             comparison_data = []
+    #             for _, row in merged.iterrows():
+    #                 status = row['Status']
+    #                 source_data = {}
+    #                 target_data = {}
+                    
+    #                 # Add all columns to both source and target
+    #                 for col in source_df.columns:
+    #                     source_col = col
+    #                     target_col = col + '_target' if col in target_df.columns else None
+                        
+    #                     source_val = row.get(source_col)
+    #                     target_val = row.get(target_col) if target_col else None
+                        
+    #                     # Check if values are different
+    #                     is_modified = (source_val != target_val) if target_val is not None else False
+                        
+    #                     comparison_data.append({
+    #                         'Column': col,
+    #                         'Source Value': source_val,
+    #                         'Target Value': target_val,
+    #                         'Status': status,
+    #                         'Modified': is_modified
+    #                     })
+                
+    #             # Check if there are any actual differences
+    #             has_differences = len([df for df in dfs_to_process if not df.empty]) > 0
+    #             if not has_differences:
+    #                 # Create Excel file with summary only
+    #                 with pd.ExcelWriter(str(report_path), engine='xlsxwriter') as writer:
+    #                     # Create summary sheet
+    #                     summary_sheet = writer.book.add_worksheet('Summary')
+                        
+    #                     # Create formats
+    #                     header_format = writer.book.add_format({
+    #                         'bold': True,
+    #                         'font_size': 12,
+    #                         'bg_color': '#D3D3D3',
+    #                         'border': 1,
+    #                         'align': 'center',
+    #                         'valign': 'vcenter'
+    #                     })
+                        
+    #                     cell_format = writer.book.add_format({
+    #                         'font_size': 11,
+    #                         'border': 1,
+    #                         'align': 'left',
+    #                         'valign': 'vcenter'
+    #                     })
+                        
+    #                     # Write summary information with detailed status
+    #                     summary_sheet.merge_range('A1:B1', 'Comparison Results', header_format)
+                        
+    #                     # Write record counts
+    #                     row = 2
+    #                     summary_sheet.write(row, 0, 'Total Records:', cell_format)
+    #                     summary_sheet.write(row, 1, f"Source: {len(source_df)}, Target: {len(target_df)}", cell_format)
+                        
+    #                     # Write difference status
+    #                     row = 4
+    #                     summary_sheet.write(row, 0, 'Status:', cell_format)
+    #                     if has_differences:
+    #                         left_only_count = sum(1 for df in dfs_to_process if not df.empty for _, row in df.iterrows() if row['Status'] == 'Left Only')
+    #                         right_only_count = sum(1 for df in dfs_to_process if not df.empty for _, row in df.iterrows() if row['Status'] == 'Right Only')
+    #                         updated_count = sum(1 for df in dfs_to_process if not df.empty for _, row in df.iterrows() if row['Status'] == 'Updated')
+                            
+    #                         status_text = "Differences found:\n"
+    #                         if left_only_count > 0:
+    #                             status_text += f"- {left_only_count} records only in Source\n"
+    #                         if right_only_count > 0:
+    #                             status_text += f"- {right_only_count} records only in Target\n"
+    #                         if updated_count > 0:
+    #                             status_text += f"- {updated_count} records with updates"
+                            
+    #                         # Create format for multi-line text
+    #                         text_format = writer.book.add_format({
+    #                             'font_size': 11,
+    #                             'border': 1,
+    #                             'align': 'left',
+    #                             'valign': 'top',
+    #                             'text_wrap': True
+    #                         })
+    #                         summary_sheet.set_row(row, 80)  # Set row height for multi-line text
+    #                         summary_sheet.write(row, 1, status_text, text_format)
+    #                     else:
+    #                         summary_sheet.write(row, 1, 'There is No Differences found.', cell_format)
+                        
+    #                     # Set column widths for better readability
+    #                     summary_sheet.set_column(0, 0, 20)
+    #                     summary_sheet.set_column(1, 1, 60)
+                    
+    #                 return str(report_path)
+                
+    #             # Create side-by-side comparison DataFrame if there are differences
+    #             if has_differences:
+    #                 comparison_df = pd.DataFrame(comparison_data)
+                    
+    #                 # Calculate number of chunks needed
+    #                 total_rows = len(merged)
+    #                 num_chunks = (total_rows - 1) // CHUNK_SIZE + 1
+                    
+    #                 # Write differences to the Differences sheet
+    #                 for chunk_idx in range(num_chunks):
+    #                     start_idx = chunk_idx * CHUNK_SIZE
+    #                     end_idx = min((chunk_idx + 1) * CHUNK_SIZE, total_rows)
+    #                     chunk = merged.iloc[start_idx:end_idx]
+                        
+    #                     # Write each row of differences
+    #                     for _, row in chunk.iterrows():
+    #                         for col in source_df.columns:
+    #                             source_val = row.get(col)
+    #                             target_val = row.get(f"{col}_target") if f"{col}_target" in row else None
+                                
+    #                             # Determine change type and write to sheet
+    #                             if row['Status'] == 'Left Only':
+    #                                 change_type = 'Left Only'
+    #                             elif row['Status'] == 'Right Only':
+    #                                 change_type = 'Right Only'
+    #                             elif source_val != target_val:
+    #                                 change_type = 'Updated'
+    #                             else:
+    #                                 continue
+                                
+    #                             # Write the difference row
+    #                             diff_sheet.write(row_idx, 0, col, cell_format)
+    #                             diff_sheet.write(row_idx, 1, str(source_val) if pd.notna(source_val) else '', 
+    #                                            modified_format if change_type in ['Updated', 'Left Only'] else cell_format)
+    #                             diff_sheet.write(row_idx, 2, str(target_val) if pd.notna(target_val) else '', 
+    #                                            modified_format if change_type in ['Updated', 'Right Only'] else cell_format)
+    #                             diff_sheet.write(row_idx, 3, row['Status'], cell_format)
+    #                             diff_sheet.write(row_idx, 4, change_type, cell_format)
+                                
+    #                             # Write difference description
+    #                             if change_type == 'Updated':
+    #                                 diff_desc = f"Changed: {str(source_val)} → {str(target_val)}"
+    #                             elif change_type == 'Left Only':
+    #                                 diff_desc = "Only in Source"
+    #                             elif change_type == 'Right Only':
+    #                                 diff_desc = "Only in Target"
+    #                             else:
+    #                                 diff_desc = ""
+    #                             diff_sheet.write(row_idx, 5, diff_desc, diff_format)
+                                
+    #                             row_idx += 1
+                
+    #         except Exception as e:
+    #             logger.error(f"Error processing difference chunks: {str(e)}")
+    #             raise ValueError(f"Failed to process difference data: {str(e)}")
+            
+    #         # Save to Excel with xlsxwriter engine for better compatibility
+    #         with pd.ExcelWriter(str(report_path), engine='xlsxwriter') as writer:
+    #             for chunk_idx in range(num_chunks):
+    #                 try:
+    #                     start_idx = chunk_idx * CHUNK_SIZE
+    #                     end_idx = min((chunk_idx + 1) * CHUNK_SIZE, total_rows)
+                        
+    #                     # Get chunk of data
+    #                     chunk = merged.iloc[start_idx:end_idx]
+                        
+    #                     # Create sheet name
+    #                     sheet_name = 'Differences' if num_chunks == 1 else f'Differences_{chunk_idx + 1}'
+                        
+    #                     # Clean up column names to avoid Excel errors
+    #                     chunk.columns = [str(col).strip().replace('/', '_').replace('\\', '_') for col in chunk.columns]
+                        
+    #                     # Write chunk to Excel
+    #                     chunk.to_excel(writer, sheet_name=sheet_name, index=False)
+                        
+    #                     # Get worksheet and create formats
+    #                     worksheet = writer.sheets[sheet_name]
+    #                     workbook = writer.book
+                        
+    #                     # Create formats for different statuses
+    #                     formats = {
+    #                         status: workbook.add_format({
+    #                             'bg_color': color,
+    #                             'border': 1
+    #                         }) for status, color in status_colors.items()
+    #                     }
+                        
+    #                     # Find Status column index
+    #                     status_col_idx = None
+    #                     for idx, col in enumerate(chunk.columns):
+    #                         if col == 'Status':
+    #                             status_col_idx = idx
+    #                             break
+                        
+    #                     if status_col_idx is not None:
+    #                         # Apply conditional formatting based on status
+    #                         for row_idx, status in enumerate(chunk['Status'], start=1):
+    #                             worksheet.write(row_idx, status_col_idx, status, formats.get(status))
+                        
+    #                     # Add summary at top of each sheet
+    #                     summary_data = chunk['Status'].value_counts().to_dict()
+    #                     summary_col = len(chunk.columns) + 2
+                        
+    #                     # Create header format
+    #                     header_format = workbook.add_format({
+    #                         'bold': True,
+    #                         'font_size': 11,
+    #                         'border': 1
+    #                     })
+                        
+    #                     # Write summary
+    #                     worksheet.write(0, summary_col, "Summary:", header_format)
+    #                     for i, (status, count) in enumerate(summary_data.items()):
+    #                         worksheet.write(i + 1, summary_col, f"{status}: {count}", formats.get(status))
+                            
+    #                     # Auto-adjust column widths
+    #                     for col_num, value in enumerate(chunk.columns.values):
+    #                         max_length = max(
+    #                             chunk[value].astype(str).str.len().max(),
+    #                             len(str(value))
+    #                         )
+    #                         worksheet.set_column(col_num, col_num, min(max_length + 2, 50))
+                            
+    #                 except Exception as sheet_error:
+    #                     logger.error(f"Error writing sheet {sheet_name}: {str(sheet_error)}")
+    #                     continue
+                
+    #             try:
+    #                 # Create summary sheet
+    #                 summary_sheet = writer.book.add_worksheet('Summary')
+                    
+    #                 # Create formats
+    #                 header_format = writer.book.add_format({
+    #                     'bold': True,
+    #                     'font_size': 11,
+    #                     'border': 1,
+    #                     'bg_color': '#D3D3D3'
+    #                 })
+                    
+    #                 cell_format = writer.book.add_format({
+    #                     'border': 1
+    #                 })
+                    
+    #                 # Write headers
+    #                 summary_sheet.write(0, 0, 'Description', header_format)
+    #                 summary_sheet.write(0, 1, 'Value', header_format)
+                    
+    #                 # Write summary data
+    #                 summary_data = [
+    #                     ('Total Rows', total_rows),
+    #                     ('Number of Sheets', num_chunks),
+    #                     ('Rows per Sheet', CHUNK_SIZE),
+    #                     ('Left Only Records', sum(merged['Status'] == 'Left Only')),
+    #                     ('Right Only Records', sum(merged['Status'] == 'Right Only')),
+    #                     ('Updated Records', sum(merged['Status'] == 'Updated'))
+    #                 ]
+                    
+    #                 for row_idx, (desc, value) in enumerate(summary_data, start=1):
+    #                     summary_sheet.write(row_idx, 0, desc, cell_format)
+    #                     summary_sheet.write(row_idx, 1, value, cell_format)
+                    
+    #                 # Auto-adjust column widths
+    #                 summary_sheet.set_column(0, 0, 20)  # Description column
+    #                 summary_sheet.set_column(1, 1, 15)  # Value column
+                        
+    #             except Exception as summary_error:
+    #                 logger.error(f"Error creating summary sheet: {str(summary_error)}")
+            
+    #         logger.info(f"Difference report generated: {report_path}")
+    #         return str(report_path)
+            
+    #     except Exception as e:
+    #         logger.error(f"Error generating difference report: {str(e)}")
+    #         raise
+
+# Changing generate difference report with 24th last running report code.###################################
     def generate_difference_report(self, source_df: pd.DataFrame, target_df: pd.DataFrame, 
-                                 join_columns: List[str], source_query: str = None, 
-                                 target_query: str = None) -> str:
+                                 join_columns: List[str]) -> str:
         """Generate enhanced side-by-side difference report."""
-        report_path = None
         try:
-            if not isinstance(source_df, pd.DataFrame) or not isinstance(target_df, pd.DataFrame):
-                raise ValueError("Both source and target must be pandas DataFrames")
-                
-            # Execute queries if provided
-            try:
-                if source_query:
-                    logger.info(f"Executing source query: {source_query}")
-                    source_df = self.execute_query(source_df, source_query)
-                    if source_df.empty:
-                        logger.warning("Source query returned no results")
-                
-                if target_query:
-                    logger.info(f"Executing target query: {target_query}")
-                    target_df = self.execute_query(target_df, target_query)
-                    if target_df.empty:
-                        logger.warning("Target query returned no results")
-            except Exception as e:
-                logger.error(f"Error executing queries: {str(e)}")
-                raise ValueError(f"Query execution failed: {str(e)}")
-                
             if source_df.empty or target_df.empty:
                 logger.info("No data to compare in difference report")
                 return None
-                
-            if not join_columns or not isinstance(join_columns, list):
-                raise ValueError("join_columns must be a non-empty list")
-
-            logger.info(f"Source columns: {list(source_df.columns)}")
-            logger.info(f"Target columns: {list(target_df.columns)}")
-            logger.info(f"Join columns requested: {join_columns}")
-            
-            # Case-insensitive column mapping
-            source_cols_lower = {col.lower(): col for col in source_df.columns}
-            target_cols_lower = {col.lower(): col for col in target_df.columns}
-            
-            logger.info(f"Source columns (lowercase): {list(source_cols_lower.keys())}")
-            logger.info(f"Target columns (lowercase): {list(target_cols_lower.keys())}")
-            
-            # Create mapping for join columns
-            join_col_mapping = {}
-            missing_in_source = []
-            missing_in_target = []
-            
-            try:
-                for join_col in join_columns:
-                    join_col_lower = join_col.lower()
-                    logger.info(f"Processing join column: {join_col} (lowercase: {join_col_lower})")
-                    
-                    # Find matching source column
-                    source_match = source_cols_lower.get(join_col_lower)
-                    if not source_match:
-                        logger.warning(f"Join column {join_col} not found in source columns")
-                        missing_in_source.append(join_col)
-                        continue
-                    
-                    # Find matching target column
-                    target_match = target_cols_lower.get(join_col_lower)
-                    if not target_match:
-                        logger.warning(f"Join column {join_col} not found in target columns")
-                        missing_in_target.append(join_col)
-                        continue
-                    
-                    logger.info(f"Mapped {join_col}: source={source_match}, target={target_match}")
-                    join_col_mapping[source_match] = target_match
-                
-                # Check for missing columns after processing all join columns
-                if missing_in_source or missing_in_target:
-                    error_msg = []
-                    if missing_in_source:
-                        error_msg.append(f"Join columns missing in source: {', '.join(missing_in_source)}")
-                    if missing_in_target:
-                        error_msg.append(f"Join columns missing in target: {', '.join(missing_in_target)}")
-                    raise ValueError('\n'.join(error_msg))
-                    
-            except Exception as e:
-                logger.error(f"Error during column mapping: {str(e)}")
-                raise ValueError(f"Failed to process join columns: {str(e)}")
-            
-            # Map columns with case-insensitive matching
-            logger.info("=== Column Mapping Process ===")
-            logger.info(f"Source columns: {list(source_df.columns)}")
-            logger.info(f"Target columns: {list(target_df.columns)}")
-            logger.info(f"Join columns: {join_columns}")
-
-            # Normalize column names to lowercase for comparison
-            source_df.columns = [col.strip().lower() for col in source_df.columns]
-            target_df.columns = [col.strip().lower() for col in target_df.columns]
-            join_columns = [col.strip().lower() for col in join_columns]
-            
-            # Create column mapping
-            join_col_mapping = {}
-            missing_cols = []
-            
-            for col in join_columns:
-                if col in source_df.columns and col in target_df.columns:
-                    join_col_mapping[col] = col
-                    logger.info(f"Mapped: {col} -> {col}")
-                else:
-                    if col not in source_df.columns:
-                        missing_cols.append(f"'{col}' (in source)")
-                    if col not in target_df.columns:
-                        missing_cols.append(f"'{col}' (in target)")
-
-            if missing_cols:
-                error_msg = f"Column mapping failed. Missing columns: {', '.join(missing_cols)}"
-                logger.error(error_msg)
-                raise ValueError(error_msg)
-
-            if not join_col_mapping:
-                error_msg = "No valid column mappings found between source and target"
-                logger.error(error_msg)
-                raise ValueError(error_msg)
-
-            # Create renamed target dataframe
-            target_df_renamed = target_df.copy()
-            rename_map = {v: k for k, v in join_col_mapping.items()}
-            
-            logger.info("=== Column Mapping ===")
-            logger.info(f"Final mapping: {join_col_mapping}")
-            logger.info(f"Rename map: {rename_map}")
-
-            # Rename target columns
-            target_df_renamed = target_df_renamed.rename(columns=rename_map)
-            
-            # Update join columns to use source column names
-            join_columns = list(join_col_mapping.keys())
-
-            logger.info("=== Final State ===")
-            logger.info(f"Final join columns: {join_columns}")
-            logger.info(f"Renamed target columns: {target_df_renamed.columns.tolist()}")
 
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             report_path = self.output_dir / f"DifferenceReport_{timestamp}.xlsx"
@@ -3027,507 +3554,110 @@ class ReportGenerator:
             
             # Process data in chunks to avoid memory issues
             dfs_to_process = []
-            
-            # Handle data types for join columns
-            for col in join_columns:
-                source_type = source_df[col].dtype
-                target_type = target_df[col].dtype
-                
-                # Check if either column contains float values
-                is_source_float = source_df[col].apply(lambda x: isinstance(x, float) or (isinstance(x, str) and '.' in x)).any()
-                is_target_float = target_df[col].apply(lambda x: isinstance(x, float) or (isinstance(x, str) and '.' in x)).any()
-                
-                if is_source_float or is_target_float:
-                    # Convert both columns to float
-                    logger.info(f"Converting column {col} to float type")
-                    try:
-                        source_df[col] = pd.to_numeric(source_df[col], errors='coerce')
-                        target_df[col] = pd.to_numeric(target_df[col], errors='coerce')
-                    except Exception as e:
-                        logger.warning(f"Could not convert column {col} to float: {str(e)}")
-                elif source_type != target_type:
-                    # For non-float columns, convert to string if types don't match
-                    logger.info(f"Converting column {col} to string type")
-                    source_df[col] = source_df[col].astype(str)
-                    target_df[col] = target_df[col].astype(str)
-
             for start_idx in range(0, len(source_df), CHUNK_SIZE):
-                try:
-                    # Get chunks of both dataframes
-                    source_chunk = source_df.iloc[start_idx:start_idx + CHUNK_SIZE]
-                    
-                    try:
-                        logger.info(f"Processing chunk {chunk_idx + 1}")
-                        
-                        # Verify columns before merge
-                        for col in join_columns:
-                            if col not in source_chunk.columns:
-                                raise ValueError(f"Join column '{col}' missing from source chunk")
-                            if col not in target_df_renamed.columns:
-                                raise ValueError(f"Join column '{col}' missing from target")
-                            
-                            # Convert to string if data types don't match
-                            if source_chunk[col].dtype != target_df_renamed[col].dtype:
-                                logger.info(f"Converting {col} to string type for comparison")
-                                source_chunk[col] = source_chunk[col].astype(str)
-                                target_df_renamed[col] = target_df_renamed[col].astype(str)
-                        
-                        # Perform merge with explicit column list
-                        merge_cols = join_columns.copy()  # Use only mapped columns
-                        chunk_merged = source_chunk.merge(
-                            target_df_renamed,
-                            on=merge_cols,
-                            how='outer',
-                            indicator=True,
-                            suffixes=('_source', '_target')
-                        )
-                        
-                        logger.info(f"Merge successful - Shape: {chunk_merged.shape}")
-                        
-                    except Exception as merge_error:
-                        logger.error(f"Error during merge operation: {str(merge_error)}")
-                        raise ValueError(f"Failed to merge data: {str(merge_error)}")
-                    
-                    # Create comparison status column with required classifications
-                    chunk_merged['Status'] = chunk_merged['_merge'].map({
-                        'left_only': 'Left Only',
-                        'right_only': 'Right Only',
-                        'both': 'Updated'
-                    })
-                    
-                    # Remove the merge indicator column
-                    chunk_merged = chunk_merged.drop('_merge', axis=1)
-                    
-                    # Keep all rows to properly track differences
-                    diff_rows = chunk_merged.copy()
-                    # Mark rows that have actual differences
-                    diff_rows['has_diff'] = False
-                    for col in source_df.columns:
-                        target_col = f"{col}_target" if f"{col}_target" in diff_rows else None
-                        if target_col:
-                            diff_rows['has_diff'] |= (diff_rows[col] != diff_rows[target_col])
-                    # Keep rows that are either unmatched or have differences
-                    diff_rows = diff_rows[
-                        (diff_rows['Status'].isin(['Left Only', 'Right Only'])) |
-                        ((diff_rows['Status'] == 'Updated') & diff_rows['has_diff'])
-                    ]
-                    if not diff_rows.empty:
-                        dfs_to_process.append(diff_rows)
-                        
-                except Exception as chunk_error:
-                    logger.error(f"Error processing chunk starting at index {start_idx}: {str(chunk_error)}")
-                    continue
+                # Get chunks of both dataframes
+                source_chunk = source_df.iloc[start_idx:start_idx + CHUNK_SIZE]
+                
+                # Find corresponding rows in target using join columns
+                chunk_merged = source_chunk.merge(
+                    target_df, 
+                    on=join_columns, 
+                    how='outer', 
+                    indicator=True,
+                    suffixes=('_source', '_target')
+                )
+                
+                # Create comparison status column
+                chunk_merged['Status'] = chunk_merged['_merge'].map({
+                    'left_only': 'Deleted',
+                    'right_only': 'Inserted',
+                    'both': 'Updated'
+                })
+                
+                # Remove the merge indicator column
+                chunk_merged = chunk_merged.drop('_merge', axis=1)
+                
+                # Only keep rows with differences
+                diff_rows = chunk_merged[chunk_merged['Status'] != 'Updated']
+                if not diff_rows.empty:
+                    dfs_to_process.append(diff_rows)
             
-            try:
-                # If there are no differences
-                if not dfs_to_process:
-                    logger.info("No differences found between source and target")
-                    
-                    # Create Excel file with summary only
-                    with pd.ExcelWriter(str(report_path), engine='xlsxwriter') as writer:
-                        # Create summary sheet
-                        summary_sheet = writer.book.add_worksheet('Summary')
-                        
-                        # Create formats
-                        header_format = writer.book.add_format({
-                            'bold': True,
-                            'font_size': 12,
-                            'bg_color': '#D3D3D3',
-                            'border': 1,
-                            'align': 'center',
-                            'valign': 'vcenter'
-                        })
-                        
-                        cell_format = writer.book.add_format({
-                            'font_size': 11,
-                            'border': 1,
-                            'align': 'left',
-                            'valign': 'vcenter'
-                        })
-                        
-                        # Write summary information
-                        summary_sheet.merge_range('A1:B1', 'Comparison Results', header_format)
-                        summary_sheet.write(2, 0, 'Status:', cell_format)
-                        summary_sheet.write(2, 1, 'There is No Differences found.', cell_format)
-                        
-                        summary_sheet.write(4, 0, 'Source Records:', cell_format)
-                        summary_sheet.write(4, 1, len(source_df), cell_format)
-                        
-                        summary_sheet.write(5, 0, 'Target Records:', cell_format)
-                        summary_sheet.write(5, 1, len(target_df), cell_format)
-                        
-                        summary_sheet.write(7, 0, 'Join Columns:', cell_format)
-                        summary_sheet.write(7, 1, ', '.join(join_columns), cell_format)
-                        
-                        # Set column widths
-                        summary_sheet.set_column(0, 0, 20)
-                        summary_sheet.set_column(1, 1, 40)
-                    
-                    return str(report_path)
-                
-                # Combine all difference chunks
-                merged = pd.concat(dfs_to_process, ignore_index=True)
-                
-                # Create differences sheet
-                diff_sheet = writer.book.add_worksheet('Differences')
-                
-                # Define formats
-                header_format = writer.book.add_format({
-                    'bold': True,
-                    'bg_color': '#D3D3D3',
-                    'border': 1,
-                    'align': 'center'
-                })
-                
-                modified_format = workbook.add_format({
-                    'bg_color': 'FFFF00',  # Yellow
-                    'border': 1
-                })
-                
-                cell_format = workbook.add_format({
-                    'border': 1
-                })
-                
-                # Write headers with enhanced information
-                headers = ['Column Name', 'Source Value', 'Target Value', 'Status', 'Change Type', 'Difference']
-                for col, header in enumerate(headers):
-                    diff_sheet.write(0, col, header, header_format)
-                    diff_sheet.set_column(col, col, 20)  # Set wider column width
-
-                # Add filter to headers
-                diff_sheet.autofilter(0, 0, 0, len(headers) - 1)
-                
-                # Process each row and column for side-by-side comparison
-                row_idx = 1
-                for _, diff_row in merged.iterrows():
-                    status = diff_row['Status']
-                    
-                    # Process each column in source dataframe
-                    for col in source_df.columns:
-                        source_val = diff_row.get(col)
-                        target_val = diff_row.get(f"{col}_target") if f"{col}_target" in diff_row else None
-                        
-                        # Determine change type
-                        if status == 'Left Only':
-                            change_type = 'Left Only'
-                        elif status == 'Right Only':
-                            change_type = 'Right Only'
-                        else:
-                            if pd.isna(source_val) and pd.isna(target_val):
-                                continue  # Skip if both values are null
-                            elif source_val != target_val:
-                                change_type = 'Updated'
-                            else:
-                                continue  # Skip if values are identical
-                        
-                        # Write the comparison row with difference highlighting
-                        diff_sheet.write(row_idx, 0, col, cell_format)
-                        
-                        # Source value
-                        source_str = str(source_val) if pd.notna(source_val) else ''
-                        diff_sheet.write(row_idx, 1, source_str, 
-                                      modified_format if change_type in ['Updated', 'Left Only'] else cell_format)
-                        
-                        # Target value
-                        target_str = str(target_val) if pd.notna(target_val) else ''
-                        diff_sheet.write(row_idx, 2, target_str, 
-                                      modified_format if change_type in ['Updated', 'Right Only'] else cell_format)
-                        
-                        # Status and Change Type
-                        diff_sheet.write(row_idx, 3, status, cell_format)
-                        diff_sheet.write(row_idx, 4, change_type, cell_format)
-                        
-                        # Difference description
-                        if change_type == 'Updated':
-                            diff_desc = f"Changed: {source_str} → {target_str}"
-                        elif change_type == 'Left Only':
-                            diff_desc = "Only in Source"
-                        elif change_type == 'Right Only':
-                            diff_desc = "Only in Target"
-                        else:
-                            diff_desc = ""
-                        diff_sheet.write(row_idx, 5, diff_desc, diff_format)
-                        
-                        row_idx += 1
-                
-                # Define status colors and formats for difference sheets
-                status_colors = {
-                    'Left Only': 'FFB6C1',   # Light pink
-                    'Right Only': '90EE90',  # Light green
-                    'Updated': 'FFD700'      # Gold
-                }
-                
-                # Create special format for difference column
-                diff_format = writer.book.add_format({
-                    'border': 1,
-                    'text_wrap': True,
-                    'align': 'left',
-                    'valign': 'top',
-                    'font_size': 10,
-                    'bg_color': 'F0F0F0'  # Light gray background
-                })
-                
-                # Create side-by-side comparison
-                comparison_data = []
-                for _, row in merged.iterrows():
-                    status = row['Status']
-                    source_data = {}
-                    target_data = {}
-                    
-                    # Add all columns to both source and target
-                    for col in source_df.columns:
-                        source_col = col
-                        target_col = col + '_target' if col in target_df.columns else None
-                        
-                        source_val = row.get(source_col)
-                        target_val = row.get(target_col) if target_col else None
-                        
-                        # Check if values are different
-                        is_modified = (source_val != target_val) if target_val is not None else False
-                        
-                        comparison_data.append({
-                            'Column': col,
-                            'Source Value': source_val,
-                            'Target Value': target_val,
-                            'Status': status,
-                            'Modified': is_modified
-                        })
-                
-                # Check if there are any actual differences
-                has_differences = len([df for df in dfs_to_process if not df.empty]) > 0
-                if not has_differences:
-                    # Create Excel file with summary only
-                    with pd.ExcelWriter(str(report_path), engine='xlsxwriter') as writer:
-                        # Create summary sheet
-                        summary_sheet = writer.book.add_worksheet('Summary')
-                        
-                        # Create formats
-                        header_format = writer.book.add_format({
-                            'bold': True,
-                            'font_size': 12,
-                            'bg_color': '#D3D3D3',
-                            'border': 1,
-                            'align': 'center',
-                            'valign': 'vcenter'
-                        })
-                        
-                        cell_format = writer.book.add_format({
-                            'font_size': 11,
-                            'border': 1,
-                            'align': 'left',
-                            'valign': 'vcenter'
-                        })
-                        
-                        # Write summary information with detailed status
-                        summary_sheet.merge_range('A1:B1', 'Comparison Results', header_format)
-                        
-                        # Write record counts
-                        row = 2
-                        summary_sheet.write(row, 0, 'Total Records:', cell_format)
-                        summary_sheet.write(row, 1, f"Source: {len(source_df)}, Target: {len(target_df)}", cell_format)
-                        
-                        # Write difference status
-                        row = 4
-                        summary_sheet.write(row, 0, 'Status:', cell_format)
-                        if has_differences:
-                            left_only_count = sum(1 for df in dfs_to_process if not df.empty for _, row in df.iterrows() if row['Status'] == 'Left Only')
-                            right_only_count = sum(1 for df in dfs_to_process if not df.empty for _, row in df.iterrows() if row['Status'] == 'Right Only')
-                            updated_count = sum(1 for df in dfs_to_process if not df.empty for _, row in df.iterrows() if row['Status'] == 'Updated')
-                            
-                            status_text = "Differences found:\n"
-                            if left_only_count > 0:
-                                status_text += f"- {left_only_count} records only in Source\n"
-                            if right_only_count > 0:
-                                status_text += f"- {right_only_count} records only in Target\n"
-                            if updated_count > 0:
-                                status_text += f"- {updated_count} records with updates"
-                            
-                            # Create format for multi-line text
-                            text_format = writer.book.add_format({
-                                'font_size': 11,
-                                'border': 1,
-                                'align': 'left',
-                                'valign': 'top',
-                                'text_wrap': True
-                            })
-                            summary_sheet.set_row(row, 80)  # Set row height for multi-line text
-                            summary_sheet.write(row, 1, status_text, text_format)
-                        else:
-                            summary_sheet.write(row, 1, 'There is No Differences found.', cell_format)
-                        
-                        # Set column widths for better readability
-                        summary_sheet.set_column(0, 0, 20)
-                        summary_sheet.set_column(1, 1, 60)
-                    
-                    return str(report_path)
-                
-                # Create side-by-side comparison DataFrame if there are differences
-                if has_differences:
-                    comparison_df = pd.DataFrame(comparison_data)
-                    
-                    # Calculate number of chunks needed
-                    total_rows = len(merged)
-                    num_chunks = (total_rows - 1) // CHUNK_SIZE + 1
-                    
-                    # Write differences to the Differences sheet
-                    for chunk_idx in range(num_chunks):
-                        start_idx = chunk_idx * CHUNK_SIZE
-                        end_idx = min((chunk_idx + 1) * CHUNK_SIZE, total_rows)
-                        chunk = merged.iloc[start_idx:end_idx]
-                        
-                        # Write each row of differences
-                        for _, row in chunk.iterrows():
-                            for col in source_df.columns:
-                                source_val = row.get(col)
-                                target_val = row.get(f"{col}_target") if f"{col}_target" in row else None
-                                
-                                # Determine change type and write to sheet
-                                if row['Status'] == 'Left Only':
-                                    change_type = 'Left Only'
-                                elif row['Status'] == 'Right Only':
-                                    change_type = 'Right Only'
-                                elif source_val != target_val:
-                                    change_type = 'Updated'
-                                else:
-                                    continue
-                                
-                                # Write the difference row
-                                diff_sheet.write(row_idx, 0, col, cell_format)
-                                diff_sheet.write(row_idx, 1, str(source_val) if pd.notna(source_val) else '', 
-                                               modified_format if change_type in ['Updated', 'Left Only'] else cell_format)
-                                diff_sheet.write(row_idx, 2, str(target_val) if pd.notna(target_val) else '', 
-                                               modified_format if change_type in ['Updated', 'Right Only'] else cell_format)
-                                diff_sheet.write(row_idx, 3, row['Status'], cell_format)
-                                diff_sheet.write(row_idx, 4, change_type, cell_format)
-                                
-                                # Write difference description
-                                if change_type == 'Updated':
-                                    diff_desc = f"Changed: {str(source_val)} → {str(target_val)}"
-                                elif change_type == 'Left Only':
-                                    diff_desc = "Only in Source"
-                                elif change_type == 'Right Only':
-                                    diff_desc = "Only in Target"
-                                else:
-                                    diff_desc = ""
-                                diff_sheet.write(row_idx, 5, diff_desc, diff_format)
-                                
-                                row_idx += 1
-                
-            except Exception as e:
-                logger.error(f"Error processing difference chunks: {str(e)}")
-                raise ValueError(f"Failed to process difference data: {str(e)}")
+            # If there are no differences
+            if not dfs_to_process:
+                logger.info("No differences found between source and target")
+                with open(report_path, 'w') as f:
+                    f.write("No differences found between source and target datasets.")
+                return str(report_path)
             
-            # Save to Excel with xlsxwriter engine for better compatibility
-            with pd.ExcelWriter(str(report_path), engine='xlsxwriter') as writer:
+            # Combine all difference chunks
+            merged = pd.concat(dfs_to_process, ignore_index=True)
+            
+            # Define status colors
+            status_colors = {
+                'Deleted': 'FFB6C1',     # Light pink
+                'Left Only': 'FFB6C1',   # Light pink
+                'Inserted': '90EE90',    # Light green
+                'Right Only': '90EE90',  # Light green
+                'Updated': 'FFD700'      # Gold
+            }
+            
+            # Calculate number of chunks needed
+            total_rows = len(merged)
+            num_chunks = (total_rows - 1) // CHUNK_SIZE + 1
+            
+            # Save to Excel with formatting, splitting into multiple sheets if necessary
+            with pd.ExcelWriter(str(report_path), engine='openpyxl') as writer:
                 for chunk_idx in range(num_chunks):
-                    try:
-                        start_idx = chunk_idx * CHUNK_SIZE
-                        end_idx = min((chunk_idx + 1) * CHUNK_SIZE, total_rows)
-                        
-                        # Get chunk of data
-                        chunk = merged.iloc[start_idx:end_idx]
-                        
-                        # Create sheet name
-                        sheet_name = 'Differences' if num_chunks == 1 else f'Differences_{chunk_idx + 1}'
-                        
-                        # Clean up column names to avoid Excel errors
-                        chunk.columns = [str(col).strip().replace('/', '_').replace('\\', '_') for col in chunk.columns]
-                        
-                        # Write chunk to Excel
-                        chunk.to_excel(writer, sheet_name=sheet_name, index=False)
-                        
-                        # Get worksheet and create formats
-                        worksheet = writer.sheets[sheet_name]
-                        workbook = writer.book
-                        
-                        # Create formats for different statuses
-                        formats = {
-                            status: workbook.add_format({
-                                'bg_color': color,
-                                'border': 1
-                            }) for status, color in status_colors.items()
-                        }
-                        
-                        # Find Status column index
-                        status_col_idx = None
-                        for idx, col in enumerate(chunk.columns):
-                            if col == 'Status':
-                                status_col_idx = idx
-                                break
-                        
-                        if status_col_idx is not None:
-                            # Apply conditional formatting based on status
-                            for row_idx, status in enumerate(chunk['Status'], start=1):
-                                worksheet.write(row_idx, status_col_idx, status, formats.get(status))
-                        
-                        # Add summary at top of each sheet
-                        summary_data = chunk['Status'].value_counts().to_dict()
-                        summary_col = len(chunk.columns) + 2
-                        
-                        # Create header format
-                        header_format = workbook.add_format({
-                            'bold': True,
-                            'font_size': 11,
-                            'border': 1
-                        })
-                        
-                        # Write summary
-                        worksheet.write(0, summary_col, "Summary:", header_format)
-                        for i, (status, count) in enumerate(summary_data.items()):
-                            worksheet.write(i + 1, summary_col, f"{status}: {count}", formats.get(status))
-                            
-                        # Auto-adjust column widths
-                        for col_num, value in enumerate(chunk.columns.values):
-                            max_length = max(
-                                chunk[value].astype(str).str.len().max(),
-                                len(str(value))
-                            )
-                            worksheet.set_column(col_num, col_num, min(max_length + 2, 50))
-                            
-                    except Exception as sheet_error:
-                        logger.error(f"Error writing sheet {sheet_name}: {str(sheet_error)}")
-                        continue
+                    start_idx = chunk_idx * CHUNK_SIZE
+                    end_idx = min((chunk_idx + 1) * CHUNK_SIZE, total_rows)
+                    
+                    # Get chunk of data
+                    chunk = merged.iloc[start_idx:end_idx]
+                    
+                    # Create sheet name
+                    sheet_name = 'Differences' if num_chunks == 1 else f'Differences_{chunk_idx + 1}'
+                    
+                    # Write chunk to Excel
+                    chunk.to_excel(writer, sheet_name=sheet_name, index=False)
+                    
+                    # Apply conditional formatting to chunk
+                    worksheet = writer.sheets[sheet_name]
+                    
+                    # Apply formatting based on status
+                    for idx, status in enumerate(chunk['Status'], start=2):
+                        cell = worksheet.cell(row=idx, column=chunk.columns.get_loc('Status') + 1)
+                        cell.fill = PatternFill(
+                            start_color=status_colors.get(status, 'FFFFFF'),
+                            end_color=status_colors.get(status, 'FFFFFF'),
+                            fill_type='solid'
+                        )
+                    
+                    # Add summary at top of each sheet
+                    summary_data = chunk['Status'].value_counts().to_dict()
+                    worksheet.cell(row=1, column=len(chunk.columns) + 2, value="Summary:")
+                    for i, (status, count) in enumerate(summary_data.items(), start=2):
+                        worksheet.cell(row=i, column=len(chunk.columns) + 2, value=f"{status}: {count}")
                 
-                try:
-                    # Create summary sheet
-                    summary_sheet = writer.book.add_worksheet('Summary')
-                    
-                    # Create formats
-                    header_format = writer.book.add_format({
-                        'bold': True,
-                        'font_size': 11,
-                        'border': 1,
-                        'bg_color': '#D3D3D3'
-                    })
-                    
-                    cell_format = writer.book.add_format({
-                        'border': 1
-                    })
-                    
-                    # Write headers
-                    summary_sheet.write(0, 0, 'Description', header_format)
-                    summary_sheet.write(0, 1, 'Value', header_format)
-                    
-                    # Write summary data
-                    summary_data = [
-                        ('Total Rows', total_rows),
-                        ('Number of Sheets', num_chunks),
-                        ('Rows per Sheet', CHUNK_SIZE),
-                        ('Left Only Records', sum(merged['Status'] == 'Left Only')),
-                        ('Right Only Records', sum(merged['Status'] == 'Right Only')),
-                        ('Updated Records', sum(merged['Status'] == 'Updated'))
+                # Add summary sheet
+                summary_df = pd.DataFrame({
+                    'Description': [
+                        'Total Rows',
+                        'Number of Sheets',
+                        'Rows per Sheet',
+                        'Deleted Records',
+                        'Inserted Records',
+                        'Updated Records'
+                    ],
+                    'Value': [
+                        total_rows,
+                        num_chunks,
+                        CHUNK_SIZE,
+                        sum(merged['Status'] == 'Deleted'),
+                        sum(merged['Status'] == 'Inserted'),
+                        sum(merged['Status'] == 'Updated')
                     ]
-                    
-                    for row_idx, (desc, value) in enumerate(summary_data, start=1):
-                        summary_sheet.write(row_idx, 0, desc, cell_format)
-                        summary_sheet.write(row_idx, 1, value, cell_format)
-                    
-                    # Auto-adjust column widths
-                    summary_sheet.set_column(0, 0, 20)  # Description column
-                    summary_sheet.set_column(1, 1, 15)  # Value column
-                        
-                except Exception as summary_error:
-                    logger.error(f"Error creating summary sheet: {str(summary_error)}")
+                })
+                summary_df.to_excel(writer, sheet_name='Summary', index=False)
             
             logger.info(f"Difference report generated: {report_path}")
             return str(report_path)
@@ -3535,6 +3665,7 @@ class ReportGenerator:
         except Exception as e:
             logger.error(f"Error generating difference report: {str(e)}")
             raise
+    
 
     def generate_datacompy_report(self, comparison_results: Dict[str, Any]) -> str:
         """Generate detailed DataCompy report with proper formatting."""
