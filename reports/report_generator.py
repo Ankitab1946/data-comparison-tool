@@ -645,12 +645,12 @@ class ReportGenerator:
                     
                     return str(report_path)
                 
-                try:
-                    # Combine all difference chunks
-                    merged = pd.concat(dfs_to_process, ignore_index=True)
-                    
-                    # Save to Excel with xlsxwriter engine
-                    with pd.ExcelWriter(str(report_path), engine='xlsxwriter') as writer:
+                # Save to Excel with xlsxwriter engine
+                with pd.ExcelWriter(str(report_path), engine='xlsxwriter') as writer:
+                    try:
+                        # Combine all difference chunks
+                        merged = pd.concat(dfs_to_process, ignore_index=True)
+                        
                         # Create summary sheet first
                         summary_sheet = writer.book.add_worksheet('Summary')
                         
@@ -770,9 +770,11 @@ class ReportGenerator:
                         summary_sheet.set_column(0, 0, 20)
                         summary_sheet.set_column(1, 1, 60)
                         
-                except Exception as e:
-                    logger.error(f"Error processing difference report: {str(e)}")
-                    raise ValueError(f"Failed to generate difference report: {str(e)}")
+                    except Exception as e:
+                        logger.error(f"Error processing difference report: {str(e)}")
+                        raise ValueError(f"Failed to generate difference report: {str(e)}")
+                    
+                    return str(report_path)
                 
 
                 
