@@ -419,6 +419,43 @@ class ComparisonEngine:
 
         return mapping
 
+    def set_mapping(self, mapping: List[Dict[str, Any]], join_columns: List[str]):
+        """
+        Set the column mapping and join columns for comparison.
+        
+        Args:
+            mapping: List of mapping dictionaries
+            join_columns: List of columns to use for joining
+        """
+        # Store current types before updating mapping
+        current_types = {}
+        if self.mapping:
+            for m in self.mapping:
+                if m['source']:
+                    current_types[m['source']] = {
+                        'source_type': m.get('source_type', ''),
+                        'target_type': m.get('target_type', ''),
+                        'data_type': m.get('data_type', '')
+                    }
+
+        # Update mapping
+        self.mapping = mapping
+        self.join_columns = join_columns
+        self.excluded_columns = [m['source'] for m in mapping if m['exclude']]
+        
+        # Preserve float types from previous mapping
+        for m in self.mapping:
+            if m['source'] in current_types:
+                prev_types = current_types[m['source']]
+                if prev_types['data_type'] == 'float' or 'float' in [prev_types['source_type'], prev_types['target_type']]:
+                    m['data_type'] = 'float'
+                    m['source_type'] = 'float'
+                    m['target_type'] = 'float'
+        
+        # Store original data types
+        self.source_types = {m['source']: m.get('source_type', '') for m in mapping}
+        self.target_types = {m['source']: m.get('target_type', '') for m in mapping}
+
     def _generate_column_summary(self, source: pd.DataFrame, target: pd.DataFrame) -> Dict[str, Dict[str, Any]]:
         """Generate column-level summary statistics."""
         summary = {}
