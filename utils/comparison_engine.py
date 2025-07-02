@@ -265,6 +265,105 @@ class ComparisonEngine:
             'target_unmatched': pd.concat(target_unmatched) if target_unmatched else pd.DataFrame()
         }
 
+    def auto_map_columns(self) -> List[Dict[str, Any]]:
+        """
+        Automatically map columns between source and target based on names and data types.
+        
+        Returns:
+            List of dictionaries containing column mappings
+        """
+        source_cols = list(self.source_df.columns)
+        target_cols = list(self.target_df.columns)
+        mapping = []
+
+        # Map source columns to target columns
+        for s_col in source_cols:
+            # Try exact match first
+            t_col = s_col if s_col in target_cols else None
+            
+            # If no exact match, try case-insensitive match
+            if not t_col:
+                t_col = next((col for col in target_cols 
+                            if col.lower() == s_col.lower()), None)
+            
+            # If still no match, try removing special characters
+            if not t_col:
+                s_clean = ''.join(e.lower() for e in s_col if e.isalnum())
+                t_col = next((col for col in target_cols 
+                            if ''.join(e.lower() for e in col if e.isalnum()) == s_clean), None)
+
+            # Get source and target types
+            source_type = str(self.source_df[s_col].dtype)
+            target_type = str(self.target_df[t_col].dtype) if t_col else 'unknown'
+            
+            # Convert 'object' type to 'string'
+            if source_type == 'object':
+                source_type = 'string'
+            if target_type == 'object':
+                target_type = 'string'
+            
+            # Check if either type is from SQL Server
+            is_sql_source = any(sql_type in source_type.lower() for sql_type in self.SQL_TYPE_MAPPING.keys())
+            is_sql_target = any(sql_type in target_type.lower() for sql_type in self.SQL_TYPE_MAPPING.keys())
+            
+            # Get mapped types
+            source_mapped = self._get_mapped_type(s_col, source_type, is_sql_source)
+            target_mapped = self._get_mapped_type(s_col, target_type, is_sql_target) if t_col else source_mapped
+            
+            # Store original types
+            original_source_type = source_type
+            original_target_type = target_type
+            
+            # Determine final type
+            if source_mapped == target_mapped:
+                mapped_type = source_mapped
+            else:
+                # For mismatched types, prefer string for text-like columns
+                if any(t in str(source_type).lower() or t in str(target_type).lower() 
+                      for t in ['char', 'text', 'string', 'object']):
+                    mapped_type = 'string'
+                    original_source_type = 'string'
+                    original_target_type = 'string'
+                else:
+                    # For numeric types, use the wider type
+                    if all(t in ['int32', 'int64', 'float32', 'float64'] for t in [source_mapped, target_mapped]):
+                        mapped_type = 'float64'  # widest numeric type
+                    else:
+                        mapped_type = 'string'  # fallback for incompatible types
+                        original_source_type = 'string'
+                        original_target_type = 'string'
+
+            # Create mapping with editable types
+            mapping_entry = {
+                'source': s_col,
+                'target': t_col or '',
+                'join': False,
+                'data_type': mapped_type,
+                'exclude': False,
+                'source_type': original_source_type,
+                'target_type': original_target_type,
+                'editable': True,
+                'original_source_type': original_source_type,
+                'original_target_type': original_target_type
+            }
+            
+            # Special handling for memory-intensive numeric columns
+            if mapped_type in ['float64', 'int64']:
+                # Check if column has too many unique values
+                unique_count = min(
+                    self.source_df[s_col].nunique() if s_col in self.source_df else 0,
+                    self.target_df[t_col].nunique() if t_col in self.target_df else 0
+                )
+                if unique_count > 1000000:  # Threshold for large columns
+                    mapping_entry['data_type'] = 'string'
+                    mapping_entry['source_type'] = 'string'
+                    mapping_entry['target_type'] = 'string'
+                    logger.warning(f"Converting {s_col} to string due to high cardinality")
+            
+            mapping.append(mapping_entry)
+
+        return mapping
+
     def _generate_column_summary(self, source: pd.DataFrame, target: pd.DataFrame) -> Dict[str, Dict[str, Any]]:
         """Generate column-level summary statistics."""
         summary = {}
