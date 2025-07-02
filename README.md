@@ -105,3 +105,64 @@ Note: Make sure your firewall allows incoming connections on port 8501 for other
 
 
 ```
+
+## Installation & Running
+
+### Windows Users:
+1. Install Python 3.10 or later from [python.org](https://www.python.org/downloads/)
+2. Double-click `run_comparison.bat`
+3. The tool will open in your default web browser at http://localhost:8000
+
+### Linux/Mac Users:
+1. Install Python 3.10 or later
+2. Open terminal in the project directory
+3. Make the script executable:
+   ```bash
+   chmod +x run_comparison.sh
+   ```
+4. Run the script:
+   ```bash
+   ./run_comparison.sh
+   ```
+
+### SQL Server Authentication
+
+For SQL Server connectivity, create a `.env` file in the project directory with your credentials:
+
+```env
+SQL_SERVER=your_server_name
+SQL_DATABASE=your_database_name
+SQL_USERNAME=your_username
+SQL_PASSWORD=your_password
+```
+
+Or use Windows Authentication by setting:
+```env
+SQL_USE_WINDOWS_AUTH=true
+```
+
+## Features
+
+- Compare data from CSV files or SQL Server databases
+- Generate detailed comparison reports:
+  - Summary worksheet with record counts and status
+  - Diff_Report worksheet showing side-by-side differences
+  - Highlighted differences (yellow for updates)
+  - Status indicators (Left Only, Right Only, Both - Update)
+- Export reports in Excel format
+- Support for SSO and Windows Authentication
+
+## Usage
+
+1. Launch the application using the appropriate script for your OS
+2. Choose your data source:
+   - Upload CSV files directly
+   - Use SQL Server connection (requires .env configuration)
+3. Select join columns for comparison
+4. Click "Generate Report" to create the comparison
+5. Download the generated report ZIP file
+
+## Report Types
+
+The tool generates several types of reports:
+
