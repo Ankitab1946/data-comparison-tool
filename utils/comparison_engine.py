@@ -563,6 +563,180 @@ class ComparisonEngine:
         self.source_types = {m['source']: m.get('source_type', '') for m in mapping}
         self.target_types = {m['source']: m.get('target_type', '') for m in mapping}
 
+    def generate_profiling_reports(self, output_dir: str) -> Dict[str, str]:
+        """
+        Generate YData Profiling reports for source and target data.
+        
+        Args:
+            output_dir: Directory to save the reports
+            
+        Returns:
+            Dictionary containing paths to generated reports
+        """
+        try:
+            output_path = Path(output_dir)
+            output_path.mkdir(parents=True, exist_ok=True)
+
+            # Create copies of dataframes and apply mapping types
+            source_df = self.source_df.copy()
+            target_df = self.target_df.copy()
+
+            if self.mapping:
+                logger.info("Applying mapping types before generating profiles...")
+                for mapping in self.mapping:
+                    if mapping['exclude'] or not mapping['target']:
+                        continue
+
+                    source_col = mapping['source']
+                    target_col = mapping['target']
+                    mapped_type = mapping.get('data_type', 'string')
+
+                    try:
+                        # Apply consistent type conversion based on mapping
+                        if mapped_type == 'string' or mapped_type == 'datetime64[ns]':
+                            source_df[source_col] = source_df[source_col].fillna('').astype(str)
+                            target_df[target_col] = target_df[target_col].fillna('').astype(str)
+                        elif mapped_type in ['int32', 'int64']:
+                            source_df[source_col] = pd.to_numeric(source_df[source_col], errors='coerce').fillna(0).astype(np.int64)
+                            target_df[target_col] = pd.to_numeric(target_df[target_col], errors='coerce').fillna(0).astype(np.int64)
+                        elif mapped_type in ['float32', 'float64']:
+                            source_df[source_col] = pd.to_numeric(source_df[source_col], errors='coerce').fillna(0).astype(np.float64)
+                            target_df[target_col] = pd.to_numeric(target_df[target_col], errors='coerce').fillna(0).astype(np.float64)
+                    except Exception as e:
+                        logger.warning(f"Error converting types for column {source_col}: {str(e)}")
+                        # Convert to string as fallback
+                        source_df[source_col] = source_df[source_col].fillna('').astype(str)
+                        target_df[target_col] = target_df[target_col].fillna('').astype(str)
+            else:
+                # If no mapping, convert all to string
+                for df in [source_df, target_df]:
+                    for col in df.columns:
+                        df[col] = df[col].fillna('').astype(str)
+
+            # Generate individual profiles with memory optimization
+            profile_kwargs = {
+                'progress_bar': False,
+                'explorative': True,
+                'minimal': True,  # Reduce memory usage
+                'pool_size': 1,   # Reduce parallel processing
+                'samples': None   # Disable sample generation
+            }
+
+            try:
+                source_profile = ProfileReport(
+                    source_df, 
+                    title="Source Data Profile",
+                    **profile_kwargs
+                )
+            except Exception as e:
+                logger.error(f"Error generating source profile: {str(e)}")
+                # Try with more aggressive memory optimization
+                source_profile = ProfileReport(
+                    source_df.astype(str),
+                    title="Source Data Profile",
+                    minimal=True,
+                    pool_size=1,
+                    samples=None,
+                    progress_bar=False
+                )
+
+            try:
+                target_profile = ProfileReport(
+                    target_df,
+                    title="Target Data Profile",
+                    **profile_kwargs
+                )
+            except Exception as e:
+                logger.error(f"Error generating target profile: {str(e)}")
+                # Try with more aggressive memory optimization
+                target_profile = ProfileReport(
+                    target_df.astype(str),
+                    title="Target Data Profile",
+                    minimal=True,
+                    pool_size=1,
+                    samples=None,
+                    progress_bar=False
+                )
+
+            # Save reports
+            source_path = output_path / "source_profile.html"
+            target_path = output_path / "target_profile.html"
+            comparison_path = output_path / "comparison_profile.html"
+
+            source_profile.to_file(str(source_path))
+            target_profile.to_file(str(target_path))
+            
+            # Generate comparison report with enhanced error handling
+            try:
+                logger.info("Generating comparison report...")
+                
+                # Clear any existing report at the path
+                if comparison_path.exists():
+                    comparison_path.unlink()
+                
+                # Generate comparison with correct method signature
+                comparison_report = source_profile.compare(target_profile)
+                
+                # Save comparison report
+                logger.info("Saving comparison report...")
+                comparison_report.to_file(str(comparison_path))
+                logger.info("Comparison report saved successfully")
+                
+            except Exception as e:
+                logger.error(f"Error generating comparison report: {str(e)}")
+                # Create a more detailed error report
+                with open(str(comparison_path), 'w', encoding='utf-8') as f:
+                    f.write(f"""
+                    <!DOCTYPE html>
+                    <html>
+                    <head>
+                        <meta charset="utf-8">
+                        <title>Data Profile Comparison Report</title>
+                        <style>
+                            body {{ font-family: Arial, sans-serif; margin: 2em; line-height: 1.6; }}
+                            h1, h2 {{ color: #333; }}
+                            .error {{ color: #721c24; background-color: #f8d7da; padding: 1em; border-radius: 4px; }}
+                            .links {{ margin-top: 2em; }}
+                            .links a {{ color: #007bff; text-decoration: none; }}
+                            .links a:hover {{ text-decoration: underline; }}
+                        </style>
+                    </head>
+                    <body>
+                        <h1>Data Profile Comparison Report</h1>
+                        <div class="error">
+                            <h2>Error Generating Detailed Comparison</h2>
+                            <p>An error occurred while generating the comparison report: {str(e)}</p>
+                        </div>
+                        <div class="links">
+                            <h2>Individual Profile Reports</h2>
+                            <p>Please check the individual profile reports for detailed analysis:</p>
+                            <ul>
+                                <li><a href="source_profile.html">Source Data Profile</a></li>
+                                <li><a href="target_profile.html">Target Data Profile</a></li>
+                            </ul>
+                        </div>
+                        <div>
+                            <h2>Troubleshooting Steps</h2>
+                            <ul>
+                                <li>Check if both source and target profiles were generated successfully</li>
+                                <li>Verify that the data types are compatible between source and target</li>
+                                <li>Consider reducing the dataset size if memory issues occur</li>
+                            </ul>
+                        </div>
+                    </body>
+                    </html>
+                    """)
+
+            return {
+                'source_profile': str(source_path),
+                'target_profile': str(target_path),
+                'comparison_profile': str(comparison_path)
+            }
+            
+        except Exception as e:
+            logger.error(f"Error in generate_profiling_reports: {str(e)}")
+            raise
+
     def _generate_column_summary(self, source: pd.DataFrame, target: pd.DataFrame) -> Dict[str, Dict[str, Any]]:
         """Generate column-level summary statistics."""
         summary = {}
