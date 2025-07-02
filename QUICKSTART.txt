@@ -1,0 +1,58 @@
+Quick Start Guide - Side by Side Comparison Tool
+==============================================
+
+NO PYTHON INSTALLATION REQUIRED!
+This is a standalone application that works right out of the box.
+
+Windows Users
+------------
+1. Download and extract comparison_tool_standalone.zip
+2. Double-click launch.bat
+3. Wait about 30 seconds for first startup
+4. Your web browser will open automatically to the application
+
+Linux/Mac Users
+--------------
+1. Download and extract comparison_tool_standalone.zip
+2. Open terminal in the extracted directory
+3. Run these commands:
+   chmod +x launch.sh
+   ./launch.sh
+4. Wait about 30 seconds for first startup
+5. Your web browser will open automatically to the application
+
+Using SQL Server?
+---------------
+1. Copy .env.example to .env
+2. Edit .env with your database settings:
+
+   For Windows Authentication:
+   SQL_USE_WINDOWS_AUTH=true
+   SQL_SERVER=your_server_name
+   SQL_DATABASE=your_database_name
+
+   For SQL Authentication:
+   SQL_SERVER=your_server_name
+   SQL_DATABASE=your_database_name
+   SQL_USERNAME=your_username
+   SQL_PASSWORD=your_password
+
+Troubleshooting
+--------------
+1. If the application doesn't start:
+   - Make sure port 8000 is not in use
+   - Try closing and reopening the launch script
+   - Check your antivirus isn't blocking the executable
+
+2. If SQL Server connection fails:
+   - Verify your .env file settings
+   - Check your network connection
+   - Make sure you're logged into your domain (for Windows Auth)
+
+3. If the browser doesn't open:
+   - Wait 30 seconds after launching
+   - Open http://localhost:8000 manually in your browser
+
+Need More Help?
+-------------
+See GUIDE.md for detailed instructions and features
