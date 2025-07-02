@@ -192,10 +192,57 @@ class ComparisonEngine:
             logger.error(f"Error in prepare_dataframes: {str(e)}")
             raise
 
-    def compare(self, chunk_size: int = 50000) -> Dict[str, Any]:
-        """Perform the comparison between source and target data."""
+    def compare(self, chunk_size: int = 50000, source_query: str = None, 
+                target_query: str = None) -> Dict[str, Any]:
+        """
+        Perform the comparison between source and target data.
+        
+        Args:
+            chunk_size: Size of chunks for processing large datasets
+            source_query: Optional SQL-like query to filter source data
+            target_query: Optional SQL-like query to filter target data
+            
+        Returns:
+            Dictionary containing comparison results
+        """
         try:
+            # Get initial prepared dataframes
             source, target = self._prepare_dataframes()
+            
+            # Apply queries if provided
+            if source_query:
+                try:
+                    # Handle TOP/LIMIT in query
+                    query = source_query.replace('top', 'limit', flags=re.IGNORECASE)
+                    filtered_source = source.query(query, engine='python')
+                    if not filtered_source.empty:
+                        source = filtered_source
+                    else:
+                        logger.warning("Source query returned no results")
+                except Exception as e:
+                    logger.error(f"Error executing source query: {str(e)}")
+                    return {
+                        'match_status': False,
+                        'error': f"Source query failed: {str(e)}",
+                        'datacompy_report': f"Comparison failed: Source query error - {str(e)}"
+                    }
+            
+            if target_query:
+                try:
+                    # Handle TOP/LIMIT in query
+                    query = target_query.replace('top', 'limit', flags=re.IGNORECASE)
+                    filtered_target = target.query(query, engine='python')
+                    if not filtered_target.empty:
+                        target = filtered_target
+                    else:
+                        logger.warning("Target query returned no results")
+                except Exception as e:
+                    logger.error(f"Error executing target query: {str(e)}")
+                    return {
+                        'match_status': False,
+                        'error': f"Target query failed: {str(e)}",
+                        'datacompy_report': f"Comparison failed: Target query error - {str(e)}"
+                    }
             
             results = {
                 'match_status': False,
