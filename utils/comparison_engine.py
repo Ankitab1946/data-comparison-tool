@@ -265,6 +265,61 @@ class ComparisonEngine:
             'target_unmatched': pd.concat(target_unmatched) if target_unmatched else pd.DataFrame()
         }
 
+    def _get_mapped_type(self, column: str, current_type: str, is_sql_type: bool = False) -> str:
+        """
+        Get the mapped data type for a column.
+        
+        Args:
+            column: Column name
+            current_type: Current data type
+            is_sql_type: Whether the type is from SQL Server
+            
+        Returns:
+            Mapped data type string
+        """
+        # Check for user override first
+        if column in self.type_overrides:
+            return self.type_overrides[column]
+        
+        # Special handling for ColumnNameID
+        if column == 'ColumnNameID':
+            return 'string'
+            
+        # Convert current type to lowercase and clean it
+        current_type = str(current_type).lower().strip()
+        # Remove length specifications like varchar(50)
+        current_type = current_type.split('(')[0]
+        
+        # Handle SQL Server types
+        if is_sql_type:
+            # Try exact match first
+            if current_type in self.SQL_TYPE_MAPPING:
+                return self.SQL_TYPE_MAPPING[current_type]
+            # Try partial match
+            for sql_type, pandas_type in self.SQL_TYPE_MAPPING.items():
+                if sql_type in current_type:
+                    return pandas_type
+        
+        # Handle Pandas types
+        else:
+            # Remove [ns] from datetime types
+            base_type = current_type.split('[')[0]
+            # Try exact match first
+            if base_type in self.PANDAS_TYPE_MAPPING:
+                return self.PANDAS_TYPE_MAPPING[base_type]
+            # Try partial match
+            for pandas_type, mapped_type in self.PANDAS_TYPE_MAPPING.items():
+                if pandas_type in base_type:
+                    return mapped_type
+        
+        # If type contains 'char' or 'text', treat as string
+        if 'char' in current_type or 'text' in current_type:
+            return 'string'
+            
+        # Default to string for unknown types
+        logger.warning(f"Unknown type '{current_type}' for column '{column}', defaulting to string")
+        return 'string'
+
     def auto_map_columns(self) -> List[Dict[str, Any]]:
         """
         Automatically map columns between source and target based on names and data types.
