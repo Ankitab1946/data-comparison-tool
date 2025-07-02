@@ -419,6 +419,66 @@ class ComparisonEngine:
 
         return mapping
 
+    def update_column_types(self, column: str, source_type: str = None, target_type: str = None):
+        """
+        Update the data types for a column.
+        
+        Args:
+            column: Column name
+            source_type: New source data type
+            target_type: New target data type
+        """
+        if not self.mapping:
+            raise ValueError("Mapping must be set before updating types")
+            
+        for m in self.mapping:
+            if m['source'] == column and m.get('editable', True):
+                # Keep existing types if they're float
+                if m['source_type'] == 'float' and not source_type:
+                    source_type = 'float'
+                if m['target_type'] == 'float' and not target_type:
+                    target_type = 'float'
+                
+                # Convert 'object' to 'string'
+                if source_type == 'object':
+                    source_type = 'string'
+                if target_type == 'object':
+                    target_type = 'string'
+                
+                # Update types
+                if source_type:
+                    m['source_type'] = source_type
+                    self.source_types[column] = source_type
+                if target_type:
+                    m['target_type'] = target_type
+                    self.target_types[column] = target_type
+                
+                # Determine new mapped type
+                new_source_type = source_type or m['source_type']
+                new_target_type = target_type or m['target_type']
+                
+                # Preserve float type if either source or target is float
+                if new_source_type == 'float' or new_target_type == 'float':
+                    m['data_type'] = 'float'
+                    return
+                
+                # Check for memory-intensive numeric types
+                if new_source_type in ['float64', 'int64'] or new_target_type in ['float64', 'int64']:
+                    unique_count = min(
+                        self.source_df[column].nunique() if column in self.source_df else 0,
+                        self.target_df[column].nunique() if column in self.target_df else 0
+                    )
+                    if unique_count > 1000000:  # Threshold for large columns
+                        logger.warning(f"Converting {column} to string due to high cardinality")
+                        m['data_type'] = 'string'
+                        m['source_type'] = 'string'
+                        m['target_type'] = 'string'
+                        return
+                
+                # Update the mapped type
+                m['data_type'] = self._get_mapped_type(column, new_source_type, True)
+                break
+
     def set_mapping(self, mapping: List[Dict[str, Any]], join_columns: List[str]):
         """
         Set the column mapping and join columns for comparison.
