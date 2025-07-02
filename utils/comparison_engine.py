@@ -153,38 +153,74 @@ class ComparisonEngine:
             raise
 
     def _prepare_dataframes(self) -> Tuple[pd.DataFrame, pd.DataFrame]:
-        """Prepare dataframes for comparison."""
+        """
+        Prepare dataframes for comparison.
+        Memory-optimized version for handling large datasets.
+        """
         if not self.mapping:
             raise ValueError("Mapping must be set before comparison")
 
         try:
             logger.info("Starting dataframe preparation...")
             
+            # Get required columns
             required_cols = {m['source']: m['target'] for m in self.mapping 
                            if not m['exclude'] and m['target']}
             
             if not required_cols:
                 raise ValueError("No valid columns found in mapping")
             
+            # Initialize empty dataframes
             source = pd.DataFrame()
             target = pd.DataFrame()
             
-            for source_col, target_col in required_cols.items():
-                try:
-                    mapping = next(m for m in self.mapping if m['source'] == source_col)
-                    mapped_type = mapping.get('data_type', 'string')
-                    
-                    source[source_col] = self.source_df[source_col].copy()
-                    target[source_col] = self.target_df[target_col].copy()
-                    
-                    self._apply_type_conversion(source, target, source_col, mapped_type)
-                    
-                except Exception as e:
-                    logger.error(f"Error processing column {source_col}: {str(e)}")
-                    if source_col in source.columns:
-                        source.drop(columns=[source_col], inplace=True)
-                    if source_col in target.columns:
-                        target.drop(columns=[source_col], inplace=True)
+            # Process columns in batches to manage memory
+            batch_size = 5  # Process 5 columns at a time
+            column_batches = [list(required_cols.items())[i:i + batch_size] 
+                            for i in range(0, len(required_cols), batch_size)]
+            
+            for batch_num, batch in enumerate(column_batches, 1):
+                logger.info(f"Processing column batch {batch_num}/{len(column_batches)}")
+                
+                batch_source = pd.DataFrame()
+                batch_target = pd.DataFrame()
+                
+                for source_col, target_col in batch:
+                    try:
+                        mapping = next(m for m in self.mapping if m['source'] == source_col)
+                        mapped_type = mapping.get('data_type', 'string')
+                        
+                        # Copy columns with memory optimization
+                        batch_source[source_col] = self.source_df[source_col].copy()
+                        batch_target[source_col] = self.target_df[target_col].copy()
+                        
+                        # Convert numeric columns to smaller dtypes where possible
+                        if pd.api.types.is_float_dtype(batch_source[source_col]):
+                            batch_source[source_col] = pd.to_numeric(batch_source[source_col], downcast='float')
+                            batch_target[source_col] = pd.to_numeric(batch_target[source_col], downcast='float')
+                        elif pd.api.types.is_integer_dtype(batch_source[source_col]):
+                            batch_source[source_col] = pd.to_numeric(batch_source[source_col], downcast='integer')
+                            batch_target[source_col] = pd.to_numeric(batch_target[source_col], downcast='integer')
+                        
+                        # Apply type conversion
+                        self._apply_type_conversion(batch_source, batch_target, source_col, mapped_type)
+                        
+                    except Exception as e:
+                        logger.error(f"Error processing column {source_col}: {str(e)}")
+                        if source_col in batch_source.columns:
+                            batch_source.drop(columns=[source_col], inplace=True)
+                        if source_col in batch_target.columns:
+                            batch_target.drop(columns=[source_col], inplace=True)
+                
+                # Merge batch results into main dataframes
+                if not batch_source.empty:
+                    for col in batch_source.columns:
+                        source[col] = batch_source[col]
+                        target[col] = batch_target[col]
+                
+                # Clear memory
+                del batch_source, batch_target
+                gc.collect()
             
             return source, target
             
@@ -295,22 +331,78 @@ class ComparisonEngine:
             }
 
     def _process_in_chunks(self, source_df: pd.DataFrame, target_df: pd.DataFrame, 
-                          join_columns: List[str], chunk_size: int = 50000) -> Dict[str, pd.DataFrame]:
-        """Process large dataframes in chunks."""
+                          join_columns: List[str], chunk_size: int = 10000) -> Dict[str, pd.DataFrame]:
+        """
+        Process large dataframes in chunks with memory optimization.
+        Uses smaller chunk size and efficient data types.
+        """
         source_unmatched = []
         target_unmatched = []
-        
+        processed_chunks = 0
+        total_chunks = (len(source_df) + chunk_size - 1) // chunk_size
+
+        # Convert numeric columns to smaller dtypes where possible
+        for df in [source_df, target_df]:
+            for col in df.columns:
+                if pd.api.types.is_float_dtype(df[col]):
+                    df[col] = pd.to_numeric(df[col], downcast='float')
+                elif pd.api.types.is_integer_dtype(df[col]):
+                    df[col] = pd.to_numeric(df[col], downcast='integer')
+
+        # Process source in chunks
         for i in range(0, len(source_df), chunk_size):
-            source_chunk = source_df.iloc[i:i + chunk_size]
-            merged = pd.merge(source_chunk, target_df, on=join_columns, how='outer', indicator=True)
-            source_unmatched.append(merged[merged['_merge'] == 'left_only'].drop('_merge', axis=1))
-            target_unmatched.append(merged[merged['_merge'] == 'right_only'].drop('_merge', axis=1))
-            del merged
+            processed_chunks += 1
+            logger.info(f"Processing chunk {processed_chunks}/{total_chunks}")
             
-        return {
-            'source_unmatched': pd.concat(source_unmatched) if source_unmatched else pd.DataFrame(),
-            'target_unmatched': pd.concat(target_unmatched) if target_unmatched else pd.DataFrame()
-        }
+            try:
+                # Get chunk of source data
+                source_chunk = source_df.iloc[i:i + chunk_size]
+                
+                # Create hash of join columns for faster matching
+                source_keys = set(map(tuple, source_chunk[join_columns].values))
+                target_keys = set(map(tuple, target_df[join_columns].values))
+                
+                # Find unmatched in source
+                source_unmatched_keys = source_keys - target_keys
+                if source_unmatched_keys:
+                    unmatched = source_chunk[source_chunk[join_columns].apply(tuple, axis=1).isin(source_unmatched_keys)]
+                    source_unmatched.append(unmatched)
+                
+                # Find unmatched in target (only for the relevant subset)
+                target_unmatched_keys = target_keys - source_keys
+                if target_unmatched_keys:
+                    unmatched = target_df[target_df[join_columns].apply(tuple, axis=1).isin(target_unmatched_keys)]
+                    target_unmatched.append(unmatched)
+                
+                # Clear memory
+                del source_chunk, source_keys, target_keys
+                gc.collect()
+                
+            except Exception as e:
+                logger.error(f"Error processing chunk {processed_chunks}: {str(e)}")
+                continue
+        
+        # Combine results efficiently
+        try:
+            result = {
+                'source_unmatched': (pd.concat(source_unmatched, ignore_index=True, copy=False)
+                                   if source_unmatched else pd.DataFrame()),
+                'target_unmatched': (pd.concat(target_unmatched, ignore_index=True, copy=False)
+                                   if target_unmatched else pd.DataFrame())
+            }
+            
+            # Clear memory
+            del source_unmatched, target_unmatched
+            gc.collect()
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error combining results: {str(e)}")
+            return {
+                'source_unmatched': pd.DataFrame(),
+                'target_unmatched': pd.DataFrame()
+            }
 
     def _get_mapped_type(self, column: str, current_type: str, is_sql_type: bool = False) -> str:
         """
@@ -733,21 +825,65 @@ class ComparisonEngine:
             """)
 
     def _generate_regression_report(self, source_df: pd.DataFrame, target_df: pd.DataFrame, path: Path) -> None:
-        """Generate a regression analysis report comparing source and target data."""
+        """
+        Generate a regression analysis report comparing source and target data.
+        Memory-optimized version for large datasets.
+        """
         try:
-            # Calculate basic statistics
+            # Calculate basic statistics in chunks
             stats = {}
+            chunk_size = 10000
+            
             for col in source_df.columns:
                 if col in target_df.columns and pd.api.types.is_numeric_dtype(source_df[col]):
-                    stats[col] = {
-                        'correlation': source_df[col].corr(target_df[col]),
-                        'source_mean': source_df[col].mean(),
-                        'target_mean': target_df[col].mean(),
-                        'source_std': source_df[col].std(),
-                        'target_std': target_df[col].std(),
-                        'diff_mean': abs(source_df[col].mean() - target_df[col].mean()),
-                        'diff_std': abs(source_df[col].std() - target_df[col].std())
-                    }
+                    # Initialize accumulators
+                    source_sum = 0
+                    target_sum = 0
+                    source_sq_sum = 0
+                    target_sq_sum = 0
+                    cross_prod_sum = 0
+                    count = 0
+                    
+                    # Process in chunks
+                    for i in range(0, len(source_df), chunk_size):
+                        source_chunk = source_df[col].iloc[i:i + chunk_size]
+                        target_chunk = target_df[col].iloc[i:i + chunk_size]
+                        
+                        # Remove NaN values
+                        mask = ~(source_chunk.isna() | target_chunk.isna())
+                        source_chunk = source_chunk[mask]
+                        target_chunk = target_chunk[mask]
+                        
+                        # Update accumulators
+                        source_sum += source_chunk.sum()
+                        target_sum += target_chunk.sum()
+                        source_sq_sum += (source_chunk ** 2).sum()
+                        target_sq_sum += (target_chunk ** 2).sum()
+                        cross_prod_sum += (source_chunk * target_chunk).sum()
+                        count += len(source_chunk)
+                    
+                    if count > 0:
+                        # Calculate statistics
+                        source_mean = source_sum / count
+                        target_mean = target_sum / count
+                        source_var = (source_sq_sum / count) - (source_mean ** 2)
+                        target_var = (target_sq_sum / count) - (target_mean ** 2)
+                        source_std = np.sqrt(source_var) if source_var > 0 else 0
+                        target_std = np.sqrt(target_var) if target_var > 0 else 0
+                        
+                        # Calculate correlation
+                        covariance = (cross_prod_sum / count) - (source_mean * target_mean)
+                        correlation = (covariance / (source_std * target_std)) if source_std * target_std > 0 else 0
+                        
+                        stats[col] = {
+                            'correlation': correlation,
+                            'source_mean': source_mean,
+                            'target_mean': target_mean,
+                            'source_std': source_std,
+                            'target_std': target_std,
+                            'diff_mean': abs(source_mean - target_mean),
+                            'diff_std': abs(source_std - target_std)
+                        }
 
             # Generate HTML report
             with open(str(path), 'w', encoding='utf-8') as f:
@@ -809,28 +945,70 @@ class ComparisonEngine:
             self._generate_basic_report(path, "Regression Analysis Report", str(e))
 
     def _generate_column_summary(self, source: pd.DataFrame, target: pd.DataFrame) -> Dict[str, Dict[str, Any]]:
-        """Generate column-level summary statistics."""
+        """
+        Generate column-level summary statistics.
+        Memory-optimized version for large datasets.
+        """
         summary = {}
+        chunk_size = 10000
         
         for col in source.columns:
             if col in self.join_columns:
                 continue
                 
             try:
+                # Initialize accumulators
+                source_null_count = 0
+                target_null_count = 0
+                source_unique_values = set()
+                target_unique_values = set()
+                source_sum = 0
+                target_sum = 0
+                source_count = 0
+                target_count = 0
+                
+                # Process in chunks
+                for i in range(0, len(source), chunk_size):
+                    # Get chunks
+                    source_chunk = source[col].iloc[i:i + chunk_size]
+                    target_chunk = target[col].iloc[i:i + chunk_size]
+                    
+                    # Update null counts
+                    source_null_count += int(source_chunk.isnull().sum())
+                    target_null_count += int(target_chunk.isnull().sum())
+                    
+                    # Update unique values (for non-null values only)
+                    source_unique_values.update(source_chunk.dropna().unique())
+                    target_unique_values.update(target_chunk.dropna().unique())
+                    
+                    # For numeric columns, update sums
+                    if np.issubdtype(source[col].dtype, np.number):
+                        source_sum += float(source_chunk.fillna(0).sum())
+                        target_sum += float(target_chunk.fillna(0).sum())
+                        source_count += len(source_chunk.dropna())
+                        target_count += len(target_chunk.dropna())
+                
+                # Create summary
                 summary[col] = {
-                    'source_null_count': int(source[col].isnull().sum()),
-                    'target_null_count': int(target[col].isnull().sum()),
-                    'source_unique_count': int(source[col].nunique()),
-                    'target_unique_count': int(target[col].nunique())
+                    'source_null_count': source_null_count,
+                    'target_null_count': target_null_count,
+                    'source_unique_count': len(source_unique_values),
+                    'target_unique_count': len(target_unique_values)
                 }
                 
-                if np.issubdtype(source[col].dtype, np.number):
+                # Add numeric statistics if applicable
+                if np.issubdtype(source[col].dtype, np.number) and source_count > 0:
                     summary[col].update({
-                        'source_sum': float(source[col].sum()),
-                        'target_sum': float(target[col].sum()),
-                        'source_mean': float(source[col].mean()),
-                        'target_mean': float(target[col].mean())
+                        'source_sum': source_sum,
+                        'target_sum': target_sum,
+                        'source_mean': source_sum / source_count if source_count > 0 else 0,
+                        'target_mean': target_sum / target_count if target_count > 0 else 0
                     })
+                
+                # Clear memory
+                del source_unique_values, target_unique_values
+                gc.collect()
+                
             except Exception as e:
                 logger.warning(f"Error processing column {col}: {str(e)}")
                 summary[col] = {
