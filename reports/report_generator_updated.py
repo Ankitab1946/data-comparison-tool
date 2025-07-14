@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import List
 import zipfile
 import logging
+import hashlib
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -27,6 +28,10 @@ class ReportGenerator:
             zipf.write(report_file_path, arcname=Path(report_file_path).name)
         return zip_path
 
+    def _hash_row(self, row_values) -> str:
+        joined = '|'.join(str(v) for v in row_values)
+        return hashlib.md5(joined.encode()).hexdigest()
+
     def generate_difference_report(self, source_df: pd.DataFrame, target_df: pd.DataFrame,
                                    join_columns: List[str], source_query: str = None,
                                    target_query: str = None) -> str:
@@ -47,38 +52,46 @@ class ReportGenerator:
             if missing_cols:
                 raise ValueError(f"Join columns missing: {', '.join(missing_cols)}")
 
-            target_df = target_df.rename(columns={col: col for col in join_columns})
+            logger.info("Hashing join columns for source...")
+            source_hashes = source_df[join_columns].apply(lambda row: self._hash_row(row.values), axis=1)
+            source_df['__row_hash'] = source_hashes
+            source_keys = set(source_hashes)
 
-            chunk_size = 100000
-            total_rows = len(source_df)
-            chunk_diffs = []
+            logger.info("Hashing join columns for target...")
+            target_hashes = target_df[join_columns].apply(lambda row: self._hash_row(row.values), axis=1)
+            target_df['__row_hash'] = target_hashes
+            target_keys = set(target_hashes)
 
-            for start in range(0, total_rows, chunk_size):
-                s_chunk = source_df.iloc[start:start+chunk_size]
-                merged = s_chunk.merge(target_df, on=join_columns, how='outer', indicator=True, suffixes=('_src', '_tgt'))
-                merged['__status'] = merged['_merge'].map({
-                    'left_only': 'Only in Source',
-                    'right_only': 'Only in Target',
-                    'both': 'Match'
-                })
-                diff_chunk = merged[merged['_merge'] != 'both']
-                chunk_diffs.append(diff_chunk.drop(columns=['_merge']))
+            only_in_source_keys = source_keys - target_keys
+            only_in_target_keys = target_keys - source_keys
+
+            logger.info(f"Rows only in source: {len(only_in_source_keys)}")
+            logger.info(f"Rows only in target: {len(only_in_target_keys)}")
+
+            only_in_source_rows = source_df[source_df['__row_hash'].isin(only_in_source_keys)].drop(columns=['__row_hash'])
+            only_in_target_rows = target_df[target_df['__row_hash'].isin(only_in_target_keys)].drop(columns=['__row_hash'])
 
             with pd.ExcelWriter(str(report_path), engine='xlsxwriter') as writer:
-                for i, chunk in enumerate(chunk_diffs):
-                    if chunk.empty:
-                        continue
-                    max_rows = 100000
-                    for j in range(0, len(chunk), max_rows):
-                        sheet_chunk = chunk.iloc[j:j+max_rows]
-                        sheet_name = f'diff_{i+1}_{j//max_rows+1}'
-                        sheet_chunk.to_excel(writer, sheet_name=sheet_name[:31], index=False)
+                max_rows = 100_000
+
+                if not only_in_source_rows.empty:
+                    for i in range(0, len(only_in_source_rows), max_rows):
+                        chunk = only_in_source_rows.iloc[i:i+max_rows]
+                        sheet_name = f'OnlyInSource_{i//max_rows+1}'
+                        chunk.to_excel(writer, sheet_name=sheet_name[:31], index=False)
+
+                if not only_in_target_rows.empty:
+                    for i in range(0, len(only_in_target_rows), max_rows):
+                        chunk = only_in_target_rows.iloc[i:i+max_rows]
+                        sheet_name = f'OnlyInTarget_{i//max_rows+1}'
+                        chunk.to_excel(writer, sheet_name=sheet_name[:31], index=False)
 
                 summary = {
                     "Total Source Records": len(source_df),
                     "Total Target Records": len(target_df),
                     "Join Columns": ', '.join(join_columns),
-                    "Difference Chunks": len(chunk_diffs)
+                    "Rows Only In Source": len(only_in_source_rows),
+                    "Rows Only In Target": len(only_in_target_rows)
                 }
                 summary_df = pd.DataFrame(list(summary.items()), columns=["Metric", "Value"])
                 summary_df.to_excel(writer, sheet_name="Summary", index=False)
