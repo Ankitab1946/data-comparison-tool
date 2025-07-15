@@ -20,28 +20,42 @@ class DataLoader:
             logger.info(f"Connecting to {db_type} database...")
 
             if db_type == 'snowflake':
-                # Required Snowflake parameters
-                user = connection_params.get('user')
-                password = connection_params.get('password')
                 account = connection_params.get('account')
                 warehouse = connection_params.get('warehouse')
                 database = connection_params.get('database')
                 schema = connection_params.get('schema')
                 role = connection_params.get('role', None)
+                use_externalbrowser = connection_params.get('use_externalbrowser', False)
 
-                if not all([user, password, account, warehouse, database, schema]):
+                if not all([account, warehouse, database, schema]):
                     raise ValueError("Missing Snowflake connection parameters")
 
                 from snowflake.sqlalchemy import URL
-                conn_url = URL(
-                    user=user,
-                    password=password,
-                    account=account,
-                    warehouse=warehouse,
-                    database=database,
-                    schema=schema,
-                    role=role
-                )
+
+                if use_externalbrowser:
+                    logger.info("Using externalbrowser (Azure AD) authentication for Snowflake.")
+                    conn_url = URL(
+                        account=account,
+                        warehouse=warehouse,
+                        database=database,
+                        schema=schema,
+                        role=role,
+                        authenticator='externalbrowser'
+                    )
+                else:
+                    user = connection_params.get('user')
+                    password = connection_params.get('password')
+                    if not all([user, password]):
+                        raise ValueError("User and password are required unless using externalbrowser authentication.")
+                    conn_url = URL(
+                        user=user,
+                        password=password,
+                        account=account,
+                        warehouse=warehouse,
+                        database=database,
+                        schema=schema,
+                        role=role
+                    )
 
                 engine = sqlalchemy.create_engine(conn_url)
 
