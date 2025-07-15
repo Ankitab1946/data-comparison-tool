@@ -7,13 +7,23 @@ def get_connection_inputs(source_type: str, prefix: str) -> dict:
         st.subheader(f"Snowflake {prefix.title()} Connection")
         params['type'] = 'snowflake'
         params['account'] = st.text_input("Account", key=f"{prefix}_account")
-        params['user'] = st.text_input("User", key=f"{prefix}_user")
-        params['password'] = st.text_input("Password", type="password", key=f"{prefix}_password")
         params['warehouse'] = st.text_input("Warehouse", key=f"{prefix}_warehouse")
         params['database'] = st.text_input("Database", key=f"{prefix}_database")
         params['schema'] = st.text_input("Schema", key=f"{prefix}_schema")
         params['role'] = st.text_input("Role (Optional)", key=f"{prefix}_role")
-        params['query'] = st.text_area("SQL Query", key=f"{prefix}_query")
+    
+        # New checkbox for Azure AD login
+        params['use_externalbrowser'] = st.checkbox(
+            "Use Azure AD (External Browser Authentication)?",
+            value=False,
+            help="Enable this to authenticate using Azure AD via browser popup."
+        )
+
+    if not params['use_externalbrowser']:
+        params['user'] = st.text_input("User", key=f"{prefix}_user")
+        params['password'] = st.text_input("Password", type="password", key=f"{prefix}_password")
+
+    params['query'] = st.text_area("SQL Query", key=f"{prefix}_query")
 
     elif source_type == 'SQL Server':
         # Existing logic
