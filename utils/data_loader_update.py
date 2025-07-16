@@ -1,17 +1,20 @@
 import os
 import pandas as pd
-import sqlalchemy
+import snowflake.connector
 import logging
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.backends import default_backend
 from urllib.parse import quote_plus
 from typing import Dict, Any
 from sqlalchemy.engine import Engine
+import sqlalchemy
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class DataLoader:
     @staticmethod
-    def connect_database(connection_params: Dict[str, Any]) -> Engine:
+    def connect_database(connection_params: Dict[str, Any]):
         try:
             if not connection_params or 'type' not in connection_params:
                 raise ValueError("Connection parameters must include 'type'")
@@ -24,40 +27,36 @@ class DataLoader:
                 warehouse = connection_params.get('warehouse')
                 database = connection_params.get('database')
                 schema = connection_params.get('schema')
-                role = connection_params.get('role', None)
-                use_externalbrowser = connection_params.get('use_externalbrowser', False)
+                user = connection_params.get('user')
+                private_key_file = connection_params.get('private_key_file')
+                private_key_passphrase = connection_params.get('private_key_passphrase', None)
 
-                if not all([account, warehouse, database, schema]):
-                    raise ValueError("Missing Snowflake connection parameters")
+                if not all([user, account, warehouse, database, schema, private_key_file]):
+                    raise ValueError("Missing Snowflake connection parameters for private key authentication.")
 
-                from snowflake.sqlalchemy import URL
-
-                if use_externalbrowser:
-                    logger.info("Using externalbrowser (Azure AD) authentication for Snowflake.")
-                    conn_url = URL(
-                        account=account,
-                        warehouse=warehouse,
-                        database=database,
-                        schema=schema,
-                        role=role,
-                        authenticator='externalbrowser'
+                with open(private_key_file, 'rb') as key_file:
+                    p_key = serialization.load_pem_private_key(
+                        key_file.read(),
+                        password=private_key_passphrase.encode() if private_key_passphrase else None,
+                        backend=default_backend()
                     )
-                else:
-                    user = connection_params.get('user')
-                    password = connection_params.get('password')
-                    if not all([user, password]):
-                        raise ValueError("User and password are required unless using externalbrowser authentication.")
-                    conn_url = URL(
-                        user=user,
-                        password=password,
-                        account=account,
-                        warehouse=warehouse,
-                        database=database,
-                        schema=schema,
-                        role=role
+                    private_key = p_key.private_bytes(
+                        encoding=serialization.Encoding.DER,
+                        format=serialization.PrivateFormat.PKCS8,
+                        encryption_algorithm=serialization.NoEncryption()
                     )
 
-                engine = sqlalchemy.create_engine(conn_url)
+                conn = snowflake.connector.connect(
+                    user=user,
+                    account=account,
+                    private_key=private_key,
+                    warehouse=warehouse,
+                    database=database,
+                    schema=schema
+                )
+
+                logger.info("Connected to Snowflake using private key authentication.")
+                return conn
 
             elif db_type == 'sql_server':
                 server = connection_params.get('server')
@@ -78,25 +77,28 @@ class DataLoader:
                     )
                 engine = sqlalchemy.create_engine(conn_str)
 
+                with engine.connect() as conn:
+                    conn.execute(sqlalchemy.text("SELECT 1"))
+
+                logger.info(f"Connected to {db_type} successfully.")
+                return engine
+
             else:
                 raise ValueError(f"Unsupported database type: {db_type}")
-
-            with engine.connect() as conn:
-                conn.execute(sqlalchemy.text("SELECT 1"))
-
-            logger.info(f"Connected to {db_type} successfully.")
-            return engine
 
         except Exception as e:
             logger.error(f"Failed to connect to {db_type}: {e}")
             raise
 
     @staticmethod
-    def load_data(engine: Engine, sql_query: str) -> pd.DataFrame:
+    def load_data(connection, sql_query: str, db_type: str) -> pd.DataFrame:
         try:
             logger.info("Loading data using SQL query...")
-            with engine.connect() as conn:
-                df = pd.read_sql(sql_query, conn)
+            if db_type == 'snowflake':
+                df = pd.read_sql(sql_query, connection)
+            else:
+                with connection.connect() as conn:
+                    df = pd.read_sql(sql_query, conn)
             logger.info(f"Data loaded. Rows: {len(df)} Columns: {len(df.columns)}")
             return df
         except Exception as e:
