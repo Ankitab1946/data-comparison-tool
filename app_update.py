@@ -50,31 +50,41 @@ def get_connection_inputs(source_type: str, prefix: str) -> dict:
 
     return params
 
-def main():
-    st.title("Database Comparison Tool")
+@staticmethod
+    def load_data(connection: Union[snowflake.connector.SnowflakeConnection, Engine], sql_query: str, db_type: str) -> pd.DataFrame:
+        try:
+            logger.info("Loading data using SQL query...")
+            if db_type == 'snowflake':
+                df = pd.read_sql(sql_query, connection)
+            else:
+                with connection.connect() as conn:
+                    df = pd.read_sql(sql_query, conn)
+            logger.info(f"Data loaded. Rows: {len(df)} Columns: {len(df.columns)}")
+            return df
+        except Exception as e:
+            logger.error(f"Failed to load data: {e}")
+            raise
 
-    source_type = st.selectbox("Select Source Type", ['Snowflake', 'SQL Server'], key='source_type')
-    target_type = st.selectbox("Select Target Type", ['Snowflake', 'SQL Server'], key='target_type')
+def main():
+    st.title("Database Data Viewer")
+
+    source_type = st.selectbox("Select Source Type", ['Snowflake', 'SQL Server', 'Teradata'], key='source_type')
 
     st.header("Source Connection Setup")
     source_params = get_connection_inputs(source_type, "source")
 
-    st.header("Target Connection Setup")
-    target_params = get_connection_inputs(target_type, "target")
-
-    if st.button("Test Source Connection"):
+    if st.button("Load Source Data"):
         try:
             conn = DataLoader.connect_database(source_params)
-            st.success("✅ Connected to Source Database")
-        except Exception as e:
-            st.error(f"❌ Failed to connect to Source: {e}")
+            st.success(f"✅ Connected to {source_type} Database")
+            sql_query = source_params.get('query')
+            if sql_query and sql_query.strip():
+                df = DataLoader.load_data(conn, sql_query, source_params['type'].lower())
+                st.success(f"{source_type} Data Loaded: {df.shape[0]} rows, {df.shape[1]} columns")
+                st.dataframe(df.head(100))
 
-    if st.button("Test Target Connection"):
-        try:
-            conn = DataLoader.connect_database(target_params)
-            st.success("✅ Connected to Target Database")
         except Exception as e:
-            st.error(f"❌ Failed to connect to Target: {e}")
+            st.error(f"❌ Failed to load source data: {e}")
 
 if __name__ == "__main__":
     main()
