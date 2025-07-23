@@ -1,0 +1,54 @@
+### Updated: data_loader.py ###
+
+from Snowflake_Dataframe import conn as snowflake_conn  # <-- Use Snowflake connection
+import pandas as pd
+
+class DataLoader:
+    ...  # Keep all existing methods
+
+    @staticmethod
+    def read_snowflake(query: str) -> pd.DataFrame:
+        """Read data from Snowflake using a SQL query."""
+        try:
+            df = pd.read_sql(query, snowflake_conn)
+            if df.empty:
+                raise ValueError("No data returned from Snowflake")
+            return df
+        except Exception as e:
+            raise RuntimeError(f"Failed to read from Snowflake: {str(e)}")
+
+
+### Updated: app.py ###
+
+from utils.data_loader import DataLoader
+...  # other imports
+
+SUPPORTED_SOURCES = [
+    'CSV file', 'DAT file', 'SQL Server', 'Stored Procs',
+    'Teradata', 'API', 'Parquet file', 'Flat files inside zipped folder', 'Snowflake'
+]
+
+...
+
+def load_data(source_type: str, file_upload, connection_params: Dict[str, Any] = None, 
+              delimiter: str = ',') -> pd.DataFrame:
+    loader = DataLoader()
+
+    if source_type == 'Snowflake':
+        if not connection_params or not connection_params.get('query'):
+            raise ValueError("Please provide a SQL query for Snowflake")
+        return loader.read_snowflake(connection_params['query'])
+
+    ...  # retain all existing branches
+
+
+def get_connection_inputs(source_type: str, prefix: str) -> Dict[str, Any]:
+    params = {}
+
+    if source_type == 'Snowflake':
+        params['type'] = 'snowflake'
+        params['query'] = st.text_area("Snowflake SQL Query", key=f"{prefix}_snowflake_query")
+
+    ...  # retain all other database types
+
+    return params
