@@ -3537,13 +3537,92 @@ class ReportGenerator:
     #         raise
 
 # Changing generate difference report with 24th last running report code.###################################
+    def _normalize_column_name(self, col_name):
+        """Normalize column name by removing spaces, underscores, and special chars"""
+        # Remove all spaces, underscores, hyphens and convert to lowercase
+        normalized = col_name.lower()
+        normalized = normalized.replace(' ', '').replace('_', '').replace('-', '')
+        # Keep only alphanumeric characters
+        normalized = ''.join(c for c in normalized if c.isalnum())
+        return normalized
+
+    def _map_join_columns(self, source_df: pd.DataFrame, target_df: pd.DataFrame, join_columns: List[str]) -> List[str]:
+        """Map join columns using the same normalization logic as comparison engine"""
+        logger.info(f"Original join columns: {join_columns}")
+        logger.info(f"Source columns: {list(source_df.columns)}")
+        logger.info(f"Target columns: {list(target_df.columns)}")
+        
+        # Create normalized lookup dictionaries
+        source_normalized = {self._normalize_column_name(col): col for col in source_df.columns}
+        target_normalized = {self._normalize_column_name(col): col for col in target_df.columns}
+        
+        mapped_join_columns = []
+        missing_columns = []
+        
+        for join_col in join_columns:
+            # Try exact match first
+            if join_col in source_df.columns and join_col in target_df.columns:
+                mapped_join_columns.append(join_col)
+                logger.info(f"Exact match found for join column: {join_col}")
+                continue
+            
+            # Try case-insensitive match
+            join_col_lower = join_col.lower()
+            source_match = None
+            target_match = None
+            
+            for s_col in source_df.columns:
+                if s_col.lower() == join_col_lower:
+                    source_match = s_col
+                    break
+            
+            for t_col in target_df.columns:
+                if t_col.lower() == join_col_lower:
+                    target_match = t_col
+                    break
+            
+            if source_match and target_match:
+                # Use the source column name as the canonical name
+                mapped_join_columns.append(source_match)
+                logger.info(f"Case-insensitive match found: {join_col} -> {source_match}")
+                continue
+            
+            # Try normalized matching
+            join_col_normalized = self._normalize_column_name(join_col)
+            
+            if join_col_normalized in source_normalized and join_col_normalized in target_normalized:
+                source_col = source_normalized[join_col_normalized]
+                target_col = target_normalized[join_col_normalized]
+                mapped_join_columns.append(source_col)
+                logger.info(f"Normalized match found: {join_col} -> {source_col} (source) and {target_col} (target)")
+                continue
+            
+            # No match found
+            missing_columns.append(join_col)
+            logger.warning(f"No match found for join column: {join_col}")
+        
+        if missing_columns:
+            error_msg = f"Failed to generate difference report: Join columns missing: {', '.join(missing_columns)}"
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+        
+        logger.info(f"Final mapped join columns: {mapped_join_columns}")
+        return mapped_join_columns
+
     def generate_difference_report(self, source_df: pd.DataFrame, target_df: pd.DataFrame, 
                                  join_columns: List[str]) -> str:
-        """Generate enhanced side-by-side difference report."""
+        """Generate enhanced side-by-side difference report with normalized column mapping."""
         try:
             if source_df.empty or target_df.empty:
                 logger.info("No data to compare in difference report")
                 return None
+
+            # Apply the same column normalization logic as comparison engine
+            try:
+                mapped_join_columns = self._map_join_columns(source_df, target_df, join_columns)
+            except ValueError as e:
+                logger.error(f"Column mapping failed: {str(e)}")
+                raise
 
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             report_path = self.output_dir / f"DifferenceReport_{timestamp}.xlsx"
@@ -3552,35 +3631,98 @@ class ReportGenerator:
             MAX_ROWS = 100000  # Significantly reduced from Excel's limit for stability
             CHUNK_SIZE = 90000  # Slightly less than max for headers and formatting
             
+            # Create normalized target dataframe for merging
+            target_df_normalized = target_df.copy()
+            
+            # Create column mapping for renaming target columns to match source
+            column_mapping = {}
+            source_normalized = {self._normalize_column_name(col): col for col in source_df.columns}
+            target_normalized = {self._normalize_column_name(col): col for col in target_df.columns}
+            
+            # Map target columns to source column names where they match
+            for target_col in target_df.columns:
+                target_norm = self._normalize_column_name(target_col)
+                if target_norm in source_normalized:
+                    source_col = source_normalized[target_norm]
+                    if source_col != target_col:
+                        column_mapping[target_col] = source_col
+                        logger.info(f"Renaming target column '{target_col}' to '{source_col}' for merge")
+            
+            # Apply column renaming to target dataframe
+            if column_mapping:
+                target_df_normalized = target_df_normalized.rename(columns=column_mapping)
+            
             # Process data in chunks to avoid memory issues
             dfs_to_process = []
             for start_idx in range(0, len(source_df), CHUNK_SIZE):
                 # Get chunks of both dataframes
                 source_chunk = source_df.iloc[start_idx:start_idx + CHUNK_SIZE]
                 
-                # Find corresponding rows in target using join columns
-                chunk_merged = source_chunk.merge(
-                    target_df, 
-                    on=join_columns, 
-                    how='outer', 
-                    indicator=True,
-                    suffixes=('_source', '_target')
-                )
-                
-                # Create comparison status column
-                chunk_merged['Status'] = chunk_merged['_merge'].map({
-                    'left_only': 'Deleted',
-                    'right_only': 'Inserted',
-                    'both': 'Updated'
-                })
-                
-                # Remove the merge indicator column
-                chunk_merged = chunk_merged.drop('_merge', axis=1)
-                
-                # Only keep rows with differences
-                diff_rows = chunk_merged[chunk_merged['Status'] != 'Updated']
-                if not diff_rows.empty:
-                    dfs_to_process.append(diff_rows)
+                try:
+                    # Find corresponding rows in target using mapped join columns
+                    chunk_merged = source_chunk.merge(
+                        target_df_normalized, 
+                        on=mapped_join_columns, 
+                        how='outer', 
+                        indicator=True,
+                        suffixes=('_source', '_target')
+                    )
+                    
+                    # Create comparison status column
+                    chunk_merged['Status'] = chunk_merged['_merge'].map({
+                        'left_only': 'Deleted',
+                        'right_only': 'Inserted',
+                        'both': 'Updated'
+                    })
+                    
+                    # Remove the merge indicator column
+                    chunk_merged = chunk_merged.drop('_merge', axis=1)
+                    
+                    # Only keep rows with differences
+                    diff_rows = chunk_merged[chunk_merged['Status'] != 'Updated']
+                    if not diff_rows.empty:
+                        dfs_to_process.append(diff_rows)
+                        
+                except Exception as merge_error:
+                    logger.error(f"Error during merge operation: {str(merge_error)}")
+                    # Try with string conversion for join columns
+                    try:
+                        logger.info("Attempting merge with string conversion for join columns")
+                        source_chunk_str = source_chunk.copy()
+                        target_df_str = target_df_normalized.copy()
+                        
+                        for col in mapped_join_columns:
+                            if col in source_chunk_str.columns:
+                                source_chunk_str[col] = source_chunk_str[col].astype(str)
+                            if col in target_df_str.columns:
+                                target_df_str[col] = target_df_str[col].astype(str)
+                        
+                        chunk_merged = source_chunk_str.merge(
+                            target_df_str, 
+                            on=mapped_join_columns, 
+                            how='outer', 
+                            indicator=True,
+                            suffixes=('_source', '_target')
+                        )
+                        
+                        # Create comparison status column
+                        chunk_merged['Status'] = chunk_merged['_merge'].map({
+                            'left_only': 'Deleted',
+                            'right_only': 'Inserted',
+                            'both': 'Updated'
+                        })
+                        
+                        # Remove the merge indicator column
+                        chunk_merged = chunk_merged.drop('_merge', axis=1)
+                        
+                        # Only keep rows with differences
+                        diff_rows = chunk_merged[chunk_merged['Status'] != 'Updated']
+                        if not diff_rows.empty:
+                            dfs_to_process.append(diff_rows)
+                            
+                    except Exception as retry_error:
+                        logger.error(f"Retry merge also failed: {str(retry_error)}")
+                        raise ValueError(f"Failed to merge data even after string conversion: {str(retry_error)}")
             
             # If there are no differences
             if not dfs_to_process:
