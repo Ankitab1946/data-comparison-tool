@@ -1,0 +1,69 @@
+# Test data for Autosys portal tests
+
+# Box configurations for testing
+boxes:
+  - box_name: "TEST_BOX_001"
+    date_condition: 1
+    alarm_if_fail: 1
+    alarm_if_terminated: 0
+    has_filewatcher: true
+    job_type: "Load"
+    
+  - box_name: "TEST_BOX_002"
+    date_condition: 1
+    alarm_if_fail: 1
+    alarm_if_terminated: 0
+    has_filewatcher: true
+    job_type: "Load"
+    
+  - box_name: "TEST_BOX_003"
+    date_condition: 1
+    alarm_if_fail: 1
+    alarm_if_terminated: 0
+    has_filewatcher: false
+    job_type: "Command"
+
+# Job configurations
+jobs:
+  - job_name: "LOAD_JOB_001"
+    job_type: "Load"
+    box_name: "TEST_BOX_001"
+    filewatcher_job: "FW_LOAD_JOB_001"
+    sql_table: "dbo.LoadStatus"
+    expected_status: "SUCCESS"
+    
+  - job_name: "LOAD_JOB_002"
+    job_type: "Load"
+    box_name: "TEST_BOX_002"
+    filewatcher_job: "FW_LOAD_JOB_002"
+    sql_table: "dbo.LoadStatus"
+    expected_status: "SUCCESS"
+
+# Filewatcher configurations
+filewatchers:
+  - name: "FW_LOAD_JOB_001"
+    associated_job: "LOAD_JOB_001"
+    file_path: "/data/input/file1.dat"
+    
+  - name: "FW_LOAD_JOB_002"
+    associated_job: "LOAD_JOB_002"
+    file_path: "/data/input/file2.dat"
+
+# SQL Server validation queries
+sql_queries:
+  check_job_load: "SELECT COUNT(*) as count FROM dbo.LoadStatus WHERE job_name = ? AND status = 'SUCCESS'"
+  check_job_status: "SELECT status FROM dbo.LoadStatus WHERE job_name = ? ORDER BY load_date DESC"
+  check_load_count: "SELECT COUNT(*) as count FROM dbo.LoadStatus WHERE load_date >= DATEADD(day, -1, GETDATE())"
+
+# Test execution parameters
+execution:
+  parallel_workers: 4
+  retry_count: 3
+  timeout_seconds: 300
+  screenshot_on_failure: true
+  
+# Expected values
+expected_values:
+  date_condition: 1
+  alarm_if_fail: 1
+  alarm_if_terminated: 0
